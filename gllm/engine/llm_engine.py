@@ -3,7 +3,7 @@ import uuid
 import queue
 from dataclasses import dataclass
 
-from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, LLMEngineBase
+from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, LLMEngineBase, TokenLogProbs
 from gllm.llm.llm import LLM
 from gllm.scheduler.request_state import RequestState
 
@@ -80,12 +80,14 @@ class LLMEngine(LLMEngineBase):
                         id=uid,
                         prompt_token_ids=prompt_token_ids,
                         generated_token_ids=[],
+                        generated_logprobs=[],
                         is_finished=False,
                         max_new_tokens=min(allowed_num_new_tokens, req.max_new_tokens),
                         stop_token_ids=stop_token_ids,
                         temperature=req.temperature,
                         top_k=req.top_k,
                         top_p=req.top_p,
+                        max_num_logprobs=req.max_num_logprobs,
                         future=future,
                     )
                 )
@@ -104,10 +106,12 @@ class LLMEngine(LLMEngineBase):
     def _update_requests(
         self,
         reqs: list[RequestState],
-        sampled_token_ids: list[int]
+        sampled_token_ids: list[int],
+        logprobs: list[TokenLogProbs],
     ):
-        for req, sampled_token_id in zip(reqs, sampled_token_ids):
+        for req, sampled_token_id, top_logprobs in zip(reqs, sampled_token_ids, logprobs):
             req.generated_token_ids.append(sampled_token_id)
+            req.generated_logprobs.append(top_logprobs)
             req.is_finished = sampled_token_id in req.stop_token_ids \
                           or len(req.generated_token_ids) >= req.max_new_tokens
     
@@ -119,8 +123,8 @@ class LLMEngine(LLMEngineBase):
         generated_text = self.llm.detokenize(req.generated_token_ids)
         result = GenerationResult(
             token_ids=req.generated_token_ids,
+            logprobs=req.generated_logprobs,
             text=generated_text,
-            logprobs=None,
         )
         if req.future:
             req.future.set_result(result)
@@ -175,8 +179,8 @@ class LLMEngine(LLMEngineBase):
         index_map = {req.id: idx for idx, req in enumerate(active_reqs)}
         while len(active_reqs) > 0:
             input_batch = self.llm.prepare_batch(active_reqs)
-            sampled_token_ids = self.llm.decode_step(input_batch)
-            self._update_requests(active_reqs, sampled_token_ids)
+            sampled_token_ids, logprobs = self.llm.decode_step(input_batch)
+            self._update_requests(active_reqs, sampled_token_ids, logprobs)
             
             # Remove finished requests.
             for idx in range(len(active_reqs) - 1, -1, -1):

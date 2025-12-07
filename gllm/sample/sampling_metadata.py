@@ -11,3 +11,5 @@ class SamplingMetadata:
     top_k: torch.Tensor
     # [B]
     top_p: torch.Tensor
+    # [B]
+    max_num_logprobs: torch.Tensor

@@ -83,7 +83,7 @@ async def test_single_generation_correctness(prompt: str):
 @pytest.mark.parametrize("prompts", [
     [
         TEST_PROMPTS[0],
-        TEST_PROMPTS[7]
+        TEST_PROMPTS[-1]
     ],
 ])
 async def test_batched_generation_correctness(prompts: list[str]):
@@ -106,6 +106,7 @@ async def test_batched_generation_correctness(prompts: list[str]):
                 temperature=0.1,
                 top_k=1,
                 top_p=1.0,
+                max_num_logprobs=1,
             )
         )
     
@@ -124,5 +125,7 @@ async def test_batched_generation_correctness(prompts: list[str]):
     del llm_engine
     
     # Compare results.
-    for actual, expected in zip(batched_results, individual_results):
-        assert actual.text == expected.text
+    for batched_result, individual_result in zip(batched_results, individual_results):
+        for actual, expected in zip(batched_result.logprobs, individual_result.logprobs):
+            assert actual[0] == expected[0]
+        assert batched_result.text == individual_result.text

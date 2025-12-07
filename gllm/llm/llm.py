@@ -8,6 +8,7 @@ from tokenizers import Tokenizer
 from gllm.config.generator_params import GeneratorParams
 from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.model import HuggingFaceModel, Model
+from gllm.sample.logprobs import TokenLogProbs
 from gllm.sample.sampler import Sampler
 from gllm.sample.sampling_metadata import SamplingMetadata
 from gllm.scheduler.input_batch import InputBatch
@@ -98,6 +99,12 @@ class LLM:
             dtype=torch.float32,
             device=device,
         )
+        # [B_max]
+        self.max_num_logprobs = torch.empty(
+            max_batch_size,
+            dtype=torch.int32,
+            device=device,
+        )
         
         self.req_idx_map: dict[int, int] = {}
         
@@ -146,6 +153,7 @@ class LLM:
         temperature = self.temperature
         top_k = self.top_k
         top_p = self.top_p
+        max_num_logprobs = self.max_num_logprobs
         paged_kv_cache = self.model.paged_kv_cache
         
         ongoing_req_idxs, new_req_idxs, finished_req_idxs = self._split_request_indices(reqs)
@@ -178,6 +186,7 @@ class LLM:
                 temperature[idx] = temperature[prev_idx]
                 top_k[idx] = top_k[prev_idx]
                 top_p[idx] = top_p[prev_idx]
+                max_num_logprobs[idx] = max_num_logprobs[prev_idx]
             
             # Allocate new blocks to hold the current sequence, if needed.
             num_new_blocks = num_required_blocks - cur_num_blocks
@@ -214,6 +223,7 @@ class LLM:
             temperature[idx] = req.temperature
             top_k[idx] = req.top_k
             top_p[idx] = req.top_p
+            max_num_logprobs[idx] = req.max_num_logprobs
             
             # Update id => idx mapping.
             self.req_idx_map[req.id] = idx
@@ -286,6 +296,7 @@ class LLM:
             temperature=temperature[:new_num_reqs],
             top_k=top_k[:new_num_reqs],
             top_p=top_p[:new_num_reqs],
+            max_num_logprobs=max_num_logprobs[:new_num_reqs],
         )
         
         return InputBatch(
@@ -296,7 +307,10 @@ class LLM:
         )
         
 
-    def decode_step(self, input_batch: InputBatch) -> list[int]:
+    def decode_step(
+        self,
+        input_batch: InputBatch
+    ) -> tuple[list[int], list[TokenLogProbs]]:
         # [B, T_q]
         input_token_ids = input_batch.query_token_ids
         positions = input_batch.positions
@@ -317,12 +331,12 @@ class LLM:
         query_lens = attn_metadata.query_lens
         # [B, vocab_size]
         final_logits = logits[self.arange[:query_lens.size(0)], query_lens - 1]
-        # [B]
+        # [B], [B]
         sampled_token_ids, logprobs = self.sampler.forward(
             final_logits,
             input_batch.sampling_metadata
         )
-        return sampled_token_ids.tolist()
+        return sampled_token_ids.tolist(), logprobs
         
         
     def tokenize(self, tokens: str) -> list[int]:
