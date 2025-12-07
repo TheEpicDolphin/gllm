@@ -1,0 +1,35 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.pkl
+*.egg-info/
+.eggs/
+*.egg
+*.log
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.pyc
+*.pyd
+
+# setuptools / pip
+pip-wheel-metadata/
+
+# --- Testing / Coverage ---
+.coverage*
+.cache
+pytest_cache/
+htmlcov/
+.tox/
+.nox/
+
+# --- Tooling ---
+.mypy_cache/
+.pyre/
+.pytype/
+ruff_cache/
+pylint-report.txt
+pylint.log
