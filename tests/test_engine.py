@@ -9,7 +9,8 @@ from gllm.llm.llm import LLM
 from gllm.model.model import HuggingFaceModel
 
 
-TEST_PROMPTS = [
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt", [
     # Instruction
     "Explain the theory of relativity in simple terms.",
     "Write a short story about a dragon and a wizard.",
@@ -35,11 +36,7 @@ TEST_PROMPTS = [
     # "Write a haiku about winter.",
     # "Compose a friendly email to remind someone of a meeting.",
     # "Describe a futuristic city in 3 sentences.",
-]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("prompt", TEST_PROMPTS)
+])
 async def test_single_generation_correctness(prompt: str):
     model = HuggingFaceModel.LLAMA_3_2_1B_INSTUCT
     device = "cpu"
@@ -82,11 +79,17 @@ async def test_single_generation_correctness(prompt: str):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("prompts", [
     [
-        TEST_PROMPTS[0],
-        TEST_PROMPTS[-1]
+        "Explain the theory of relativity in simple terms.",
+        "Write a Python function to compute factorial of n.",
+    ],
+    [
+        "Summarize the following paragraph: 'Artificial intelligence is rapidly changing the world...'",
+        "What is the capital of France?",
+        "Repeat the word 'hello' 3 times.",
+        "Translate this sentence to Spanish: 'The cat is on the roof.'",
     ],
 ])
-async def test_batched_generation_correctness(prompts: list[str]):
+async def test_batched_generation_correctness(prompts: list[str]):  
     model = HuggingFaceModel.LLAMA_3_2_1B_INSTUCT
     device = "cpu"
     gen_params = GeneratorParams(
@@ -126,6 +129,5 @@ async def test_batched_generation_correctness(prompts: list[str]):
     
     # Compare results.
     for batched_result, individual_result in zip(batched_results, individual_results):
-        for actual, expected in zip(batched_result.logprobs, individual_result.logprobs):
-            assert actual[0] == expected[0]
+        assert batched_result.logprobs == individual_result.logprobs
         assert batched_result.text == individual_result.text

@@ -23,16 +23,6 @@ class Sampler:
         self.device = device
     
     
-    def apply_temperature(
-        self,
-        # [B, 1, vocab_size]
-        logits: torch.Tensor,
-        # [B]
-        temp: torch.Tensor,
-    ) -> torch.Tensor:
-        return logits.div_(temp.view(-1, 1))
-    
-
     def sample_top_k(
         self,
         # [B, vocab_size]
@@ -82,12 +72,12 @@ class Sampler:
     ) -> SamplerOutput:
         B, _ = logits.shape
         # Use float32 for the logits.
-        logits = logits.to(torch.float32)
+        raw_logits = logits.to(torch.float32)
         # Apply temperature.
-        logits = self.apply_temperature(logits, sampling_metadata.temperature)
+        processed_logits = raw_logits / sampling_metadata.temperature.view(-1, 1)
         # Sample top-k first (more efficient).
         # [B, K_max], [B, K_max], [B, K_max]
-        top_logits, top_k_token_ids, top_k_idxs = self.sample_top_k(logits, sampling_metadata.top_k)
+        top_logits, top_k_token_ids, top_k_idxs = self.sample_top_k(processed_logits, sampling_metadata.top_k)
         # Sample top-p.
         # [B]
         num_candidates = self.apply_top_p(top_logits, sampling_metadata.top_p)
@@ -97,12 +87,13 @@ class Sampler:
         sampled_idxs = torch.multinomial(probs, num_samples=1)
         sampled_token_ids = top_k_token_ids.gather(1, sampled_idxs).view(-1)
         # Compute logprobs.
-        log_probs = F.log_softmax(top_logits, dim=-1)
-        num_logprobs = torch.max(sampling_metadata.max_num_logprobs, num_candidates)
-        logprobs_mask = top_k_idxs < num_logprobs.unsqueeze(1)
+        logprobs = F.log_softmax(raw_logits, dim=-1)
+        top_k_logprobs = logprobs.gather(1, top_k_token_ids)
+        num_logprobs = torch.min(sampling_metadata.max_num_logprobs, num_candidates)
         num_logprobs_list = num_logprobs.tolist()
+        logprobs_mask = top_k_idxs < num_logprobs.unsqueeze(1)
         logprob_values = torch.split(
-            log_probs[logprobs_mask],
+            top_k_logprobs[logprobs_mask],
             num_logprobs_list,
         )
         logprob_token_ids = torch.split(
