@@ -42,14 +42,15 @@ class Attention:
         assert self.head_dim == self.hidden_size // self.num_q_heads
         
         attn_prefix = f"model.layers.{layer_idx}.self_attn"
+        dtype = model_config.dtype
         # [hidden_size, num_q_heads * head_dim]
-        self.W_q = safetensors[f"{attn_prefix}.q_proj.weight"]
+        self.W_q = safetensors[f"{attn_prefix}.q_proj.weight"].to(dtype)
         # [hidden_size, num_kv_heads * head_dim]
-        self.W_k = safetensors[f"{attn_prefix}.k_proj.weight"]
+        self.W_k = safetensors[f"{attn_prefix}.k_proj.weight"].to(dtype)
         # [hidden_size, num_kv_heads * head_dim]
-        self.W_v = safetensors[f"{attn_prefix}.v_proj.weight"]
+        self.W_v = safetensors[f"{attn_prefix}.v_proj.weight"].to(dtype)
         # [num_q_heads * head_dim, hidden_size]
-        self.W_o = safetensors[f"{attn_prefix}.o_proj.weight"]
+        self.W_o = safetensors[f"{attn_prefix}.o_proj.weight"].to(dtype)
     
     
     def apply_rope(
@@ -157,14 +158,15 @@ class Attention:
         assert k.shape == v.shape
         B, T_q, num_q_heads, head_dim = q.shape
         _, _, num_kv_heads, _ = kv_cache.shape
+        kv_dtype = kv_cache.dtype
         
         # Cache query token K/Vs.
         # TODO: Remove dummy query slots to reduce copying.
         # [B, T_q]
         query_slot_mapping = attention_metadata.query_slot_mapping
         query_slot_mapping = query_slot_mapping.view(-1)
-        kv_cache[0, query_slot_mapping, :, :] = k.view(-1, num_kv_heads, head_dim)
-        kv_cache[1, query_slot_mapping, :, :] = v.view(-1, num_kv_heads, head_dim)
+        kv_cache[0, query_slot_mapping, :, :] = k.view(-1, num_kv_heads, head_dim).to(kv_dtype)
+        kv_cache[1, query_slot_mapping, :, :] = v.view(-1, num_kv_heads, head_dim).to(kv_dtype)
         
         # Get sequence K/Vs.
         # [B, T]
@@ -172,8 +174,8 @@ class Attention:
         # [B * T]
         slot_mapping = slot_mapping.view(-1)
         # [B, T, num_kv_heads, head_dim]
-        k = kv_cache[0, slot_mapping, :, :].view(B, -1, num_kv_heads, head_dim)
-        v = kv_cache[1, slot_mapping, :, :].view(B, -1, num_kv_heads, head_dim)
+        k = kv_cache[0, slot_mapping, :, :].view(B, -1, num_kv_heads, head_dim).to(q.dtype)
+        v = kv_cache[1, slot_mapping, :, :].view(B, -1, num_kv_heads, head_dim).to(q.dtype)
         _, T, _, _ = k.shape
         
         if self.num_groups > 1:

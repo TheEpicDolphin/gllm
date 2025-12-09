@@ -41,9 +41,6 @@ class PagedKVCache:
             dtype=kv_dtype,
             device=device,
         )
-        # Zero out the 0th block. It will be used as a placeholder for no-op attention.
-        self.physical_kv_cache[:, :, 0, :, :, :] = 0
-        
         self.flattened_kv_cache = self.physical_kv_cache.view(2, num_layers, -1, num_kv_heads, head_dim)
         
         # Not yet referenced by any requests.

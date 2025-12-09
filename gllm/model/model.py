@@ -66,7 +66,7 @@ class Model:
         with open(local_config_path, "r") as f:
             config = json.load(f)
         self.model_config = ModelConfig(
-            dtype=getattr(torch, config["torch_dtype"]),
+            dtype=getattr(torch, gen_params.model_dtype or config["torch_dtype"]),
             hidden_size=config["hidden_size"],
             head_dim=config["head_dim"],
             intermediate_size=config["intermediate_size"],
@@ -76,7 +76,7 @@ class Model:
             num_kv_heads=config["num_key_value_heads"],
             rms_norm_eps=config["rms_norm_eps"],
             eos_token_ids=self.parse_eos_token_ids(config),
-            kv_dtype=getattr(torch, config["torch_dtype"]),
+            kv_dtype=getattr(torch, gen_params.kv_dtype or config["torch_dtype"]),
             rope_theta=config["rope_theta"],
         )
         
@@ -97,7 +97,7 @@ class Model:
             ))
         
         # Initialize final norm.
-        final_norm_weights = safetensors[f"model.norm.weight"]
+        final_norm_weights = safetensors[f"model.norm.weight"].to(self.dtype)
         self.final_norm = RMSNorm(
             weights=final_norm_weights,
             eps=self.model_config.rms_norm_eps
@@ -107,7 +107,7 @@ class Model:
         # ids to get the embedding vectors. It is also used as an LM
         # heead by multiplying with the hidden states to obtain the
         # logits.
-        self.embedding = safetensors["model.embed_tokens.weight"]
+        self.embedding = safetensors["model.embed_tokens.weight"].to(self.dtype)
         self.device = torch.device(device)
         
         # Construct RoPE sin/cos caches for positions up to T_max.

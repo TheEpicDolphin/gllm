@@ -13,14 +13,15 @@ class Transformer:
         model_config: ModelConfig,
         safetensors,
     ):
+        dtype = model_config.dtype
         # Initialize layer input norm.
-        input_layernorm_weights = safetensors[f"model.layers.{layer_idx}.input_layernorm.weight"]
+        input_layernorm_weights = safetensors[f"model.layers.{layer_idx}.input_layernorm.weight"].to(dtype)
         self.input_norm = RMSNorm(
             weights=input_layernorm_weights,
             eps=model_config.rms_norm_eps
         )
         # Initialize post-attention norm.
-        post_attn_norm_weights = safetensors[f"model.layers.{layer_idx}.post_attention_layernorm.weight"]
+        post_attn_norm_weights = safetensors[f"model.layers.{layer_idx}.post_attention_layernorm.weight"].to(dtype)
         self.post_attn_norm = RMSNorm(
             weights=post_attn_norm_weights,
             eps=model_config.rms_norm_eps

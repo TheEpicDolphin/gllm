@@ -11,9 +11,10 @@ class MLP:
         safetensors
     ):
         mlp_prefix = f"model.layers.{layer_idx}.mlp"
-        self.W_down = safetensors[f"{mlp_prefix}.down_proj.weight"]
-        self.W_gate = safetensors[f"{mlp_prefix}.gate_proj.weight"]
-        self.W_up = safetensors[f"{mlp_prefix}.up_proj.weight"]
+        dtype = model_config.dtype
+        self.W_down = safetensors[f"{mlp_prefix}.down_proj.weight"].to(dtype)
+        self.W_gate = safetensors[f"{mlp_prefix}.gate_proj.weight"].to(dtype)
+        self.W_up = safetensors[f"{mlp_prefix}.up_proj.weight"].to(dtype)
 
         if model_config.act_func == ActivationFunction.SILU:
             self.act_func = self.silu

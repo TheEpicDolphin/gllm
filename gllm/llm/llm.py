@@ -155,6 +155,7 @@ class LLM:
         top_p = self.top_p
         max_num_logprobs = self.max_num_logprobs
         paged_kv_cache = self.model.paged_kv_cache
+        block_size = self.gen_params.block_size
         
         ongoing_req_idxs, new_req_idxs, finished_req_idxs = self._split_request_indices(reqs)
             
@@ -239,7 +240,7 @@ class LLM:
         
         # Update slot mapping.
         # [B, max_num_blocks, block_size]
-        slot_mapping = self.block_offsets.size(0) * block_table.unsqueeze(2) + self.block_offsets
+        slot_mapping = block_size * block_table.unsqueeze(2) + self.block_offsets
         # [B, max_num_blocks * block_size]
         slot_mapping = slot_mapping.view(new_num_reqs, -1)
         # [B, T]
@@ -252,11 +253,6 @@ class LLM:
         query_slot_mapping = slot_mapping.gather(dim=-1, index=padded_query_token_positions)
         
         # Update attention bias.
-        max_context_len = max_seq_len - max_query_len
-        # [B, T_q]
-        query_indices = self.arange[:max_query_len].expand(new_num_reqs, -1)
-        # [B, T - T_q]
-        context_indices = self.arange[:max_context_len].expand(new_num_reqs, -1)
         # [T_q, T]
         bias = torch.zeros(
             (max_query_len, max_seq_len),
@@ -264,22 +260,21 @@ class LLM:
             device=self.device
         )
         # Causal mask.
+        max_context_len = max_seq_len - max_query_len
         query_bias = bias[:, max_context_len:]
         query_bias.fill_(float("-inf"))
         query_bias.triu_(diagonal=1)
         # [B, T_q, T]
         bias = bias.expand(new_num_reqs, -1, -1).contiguous()
-        # Mask out indices > sequence length.
-        # [B, T_q, T - T_q]
-        context_bias = bias[:, :, :max_context_len]
-        context_lens_mask = context_indices >= context_lens.unsqueeze(1)
-        context_lens_mask = context_lens_mask.unsqueeze(1).expand_as(context_bias)
-        context_bias.masked_fill_(context_lens_mask, float("-inf"))
+        # Mask out padded indices (indices > sequence length).
+        seq_idxs = self.arange[:max_seq_len].expand(new_num_reqs, -1)
+        invalid_idxs_mask = seq_idxs >= seq_lens.unsqueeze(1)
+        invalid_idxs_mask = invalid_idxs_mask.unsqueeze(1).expand_as(bias)
+        bias.masked_fill_(invalid_idxs_mask, float("-inf"))
         
         # Update query token ids for next decode step.
         query_token_ids = token_ids.gather(dim=-1, index=padded_query_token_positions)
-        # Update query positions for next decode step.
-        positions = padded_query_token_positions
+        
         # Update attention metadata.
         attention_metadata = AttentionMetadata(
             query_lens=query_lens,
@@ -301,7 +296,7 @@ class LLM:
         
         return InputBatch(
             query_token_ids=query_token_ids,
-            positions=positions,
+            positions=padded_query_token_positions,
             attention_metadata=attention_metadata,
             sampling_metadata=sampling_metadata,
         )
@@ -315,17 +310,17 @@ class LLM:
         input_token_ids = input_batch.query_token_ids
         positions = input_batch.positions
         attn_metadata = input_batch.attention_metadata
-        # [B, T, hidden_size]
+        # [B, T_q, hidden_size]
         token_embeddings = self.model.get_token_embeddings(input_token_ids)
         assert not torch.isnan(token_embeddings).any()
-        # [B, T, hidden_size]
+        # [B, T_q, hidden_size]
         output_hidden_states = self.model.forward(
             token_embeddings,
             positions,
             attn_metadata
         )
         assert not torch.isnan(output_hidden_states).any()
-        # [B, T, vocab_size]
+        # [B, T_q, vocab_size]
         logits = self.model.compute_logits(output_hidden_states)
         assert not torch.isnan(logits).any()
         query_lens = attn_metadata.query_lens

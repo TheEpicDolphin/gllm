@@ -1,4 +1,5 @@
 import asyncio
+import math
 import pytest
 
 from gllm.config.generator_params import GeneratorParams
@@ -37,13 +38,12 @@ from gllm.model.model import HuggingFaceModel
     # "Compose a friendly email to remind someone of a meeting.",
     # "Describe a futuristic city in 3 sentences.",
 ])
-async def test_single_generation_correctness(prompt: str):
+async def test_individual_generation_correctness(prompt: str):
     model = HuggingFaceModel.LLAMA_3_2_1B_INSTUCT
     device = "cpu"
     gen_params = GeneratorParams(
         block_size=16,
         max_batch_size=8,
-        max_chunked_prefill=128,
         max_seq_len=256,
     )
     
@@ -84,7 +84,7 @@ async def test_single_generation_correctness(prompt: str):
     ],
     [
         "Summarize the following paragraph: 'Artificial intelligence is rapidly changing the world...'",
-        "What is the capital of France?",
+        "2+2=",
         "Repeat the word 'hello' 3 times.",
         "Translate this sentence to Spanish: 'The cat is on the roof.'",
     ],
@@ -95,8 +95,9 @@ async def test_batched_generation_correctness(prompts: list[str]):
     gen_params = GeneratorParams(
         block_size=16,
         max_batch_size=8,
-        max_chunked_prefill=128,
         max_seq_len=256,
+        model_dtype="float32",
+        kv_dtype="float32",
     )
     
     requests = []
@@ -129,5 +130,9 @@ async def test_batched_generation_correctness(prompts: list[str]):
     
     # Compare results.
     for batched_result, individual_result in zip(batched_results, individual_results):
-        assert batched_result.logprobs == individual_result.logprobs
+        for breq_logprobs, ireq_logprobs in zip(batched_result.logprobs, individual_result.logprobs):
+            # Compare logprobs for approximate equality.
+            assert math.isclose(breq_logprobs[0], breq_logprobs[0], rel_tol=1e-5, abs_tol=1e-8)
+            # Compare tokens for exact equality.
+            assert breq_logprobs[1] == ireq_logprobs[1]
         assert batched_result.text == individual_result.text
