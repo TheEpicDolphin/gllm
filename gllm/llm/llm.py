@@ -229,51 +229,66 @@ class LLM:
             # Update id => idx mapping.
             self.req_idx_map[req.id] = idx
 
-        new_num_reqs = len(reqs)
-        query_lens = query_lens[:new_num_reqs]
+        bs = len(reqs)
+        query_lens = query_lens[:bs]
         max_query_len = query_lens.max()
-        seq_lens = seq_lens[:new_num_reqs]
+        seq_lens = seq_lens[:bs]
         max_seq_len = seq_lens.max()
-        max_num_blocks = num_blocks[:new_num_reqs].max()
-        block_table = block_table[:new_num_reqs, :max_num_blocks]
+        max_num_blocks = num_blocks[:bs].max()
+        block_table = block_table[:bs, :max_num_blocks]
         context_lens = seq_lens - query_lens
         
         # Update slot mapping.
         # [B, max_num_blocks, block_size]
         slot_mapping = block_size * block_table.unsqueeze(2) + self.block_offsets
         # [B, max_num_blocks * block_size]
-        slot_mapping = slot_mapping.view(new_num_reqs, -1)
+        slot_mapping = slot_mapping.view(bs, -1)
         # [B, T]
         slot_mapping = slot_mapping[:, :max_seq_len].contiguous()
         
-        # Update query slot mapping.
-        # [B, T_q]
-        padded_query_token_positions = context_lens.unsqueeze(1) + self.arange[:max_query_len]
-        # [B, T_q]
-        query_slot_mapping = slot_mapping.gather(dim=-1, index=padded_query_token_positions)
+        # Create padded slot mapping.
+        max_context_len = context_lens.max()
+        padded_slot_mapping = torch.zeros(
+            (bs, max_context_len + max_query_len),
+            dtype=slot_mapping.dtype,
+            device=self.device,
+        )
+        context_padding = max_context_len - context_lens
+        for i in range(bs):
+            padding = context_padding[i].item()
+            seq_len = seq_lens[i].item()
+            padded_slot_mapping[i, padding:padding + seq_len] = slot_mapping[i, :seq_len]
         
-        # Update attention bias.
-        # [T_q, T]
-        bias = torch.zeros(
-            (max_query_len, max_seq_len),
+        # Update query slot mapping.
+        query_slot_mapping = padded_slot_mapping[:, -max_query_len:].contiguous()
+        
+        # Update attention context bias.
+        context_bias = torch.zeros(
+            (bs, max_query_len, max_context_len),
             dtype=self.model.dtype,
-            device=self.device
+            device=self.device,
+        )
+        context_padding_mask = padded_slot_mapping[:, :-max_query_len] == 0
+        context_padding_mask = context_padding_mask.unsqueeze(1).expand_as(context_bias)
+        context_bias[context_padding_mask] = float("-inf")
+        
+        # Update attention query bias.
+        # [T_q, T_q]
+        query_bias = torch.full(
+            (max_query_len, max_query_len),
+            float("-inf"),
+            dtype=self.model.dtype,
+            device=self.device,
         )
         # Causal mask.
-        max_context_len = max_seq_len - max_query_len
-        query_bias = bias[:, max_context_len:]
-        query_bias.fill_(float("-inf"))
         query_bias.triu_(diagonal=1)
-        # [B, T_q, T]
-        bias = bias.expand(new_num_reqs, -1, -1).contiguous()
-        # Mask out padded indices (indices > sequence length).
-        seq_idxs = self.arange[:max_seq_len].expand(new_num_reqs, -1)
-        invalid_idxs_mask = seq_idxs >= seq_lens.unsqueeze(1)
-        invalid_idxs_mask = invalid_idxs_mask.unsqueeze(1).expand_as(bias)
-        bias.masked_fill_(invalid_idxs_mask, float("-inf"))
+        # [B, T_q, T_q]
+        query_bias = query_bias.expand(bs, -1, -1).contiguous()
         
         # Update query token ids for next decode step.
-        query_token_ids = token_ids.gather(dim=-1, index=padded_query_token_positions)
+         # [B, T_q]
+        query_token_positions = context_lens.unsqueeze(1) + self.arange[:max_query_len]
+        query_token_ids = token_ids.gather(dim=-1, index=query_token_positions)
         
         # Update attention metadata.
         attention_metadata = AttentionMetadata(
@@ -281,22 +296,23 @@ class LLM:
             seq_lens=seq_lens,
             max_seq_len=max_seq_len,
             block_table=block_table,
-            slot_mapping=slot_mapping,
+            slot_mapping=padded_slot_mapping,
             query_slot_mapping=query_slot_mapping,
-            bias=bias,
+            context_bias=context_bias,
+            query_bias=query_bias,
         )
 
         # Update sampling metadata.
         sampling_metadata = SamplingMetadata(
-            temperature=temperature[:new_num_reqs],
-            top_k=top_k[:new_num_reqs],
-            top_p=top_p[:new_num_reqs],
-            max_num_logprobs=max_num_logprobs[:new_num_reqs],
+            temperature=temperature[:bs],
+            top_k=top_k[:bs],
+            top_p=top_p[:bs],
+            max_num_logprobs=max_num_logprobs[:bs],
         )
         
         return InputBatch(
             query_token_ids=query_token_ids,
-            positions=padded_query_token_positions,
+            positions=query_token_positions,
             attention_metadata=attention_metadata,
             sampling_metadata=sampling_metadata,
         )

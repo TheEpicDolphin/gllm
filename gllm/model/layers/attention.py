@@ -19,8 +19,10 @@ class AttentionMetadata:
     slot_mapping: torch.Tensor
     # [B, T_q]
     query_slot_mapping: torch.Tensor
-    # [B, T_q, T]
-    bias: torch.Tensor
+    # [B, T_q, T - T_q]
+    context_bias: torch.Tensor
+    # [B, T_q, T_q]
+    query_bias: torch.Tensor
 
 class Attention:
     def __init__(
@@ -198,11 +200,11 @@ class Attention:
 
         # Compute attention scores: Q @ K^T / sqrt(d_k).
         # [B, num_heads, T_q, T]
-        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)        
-        # Apply attention bias.
-        # [B, T_q, T]
-        attn_bias = attention_metadata.bias
-        attn_scores += attn_bias.unsqueeze(1)
+        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        # Apply attention bias to context padding.
+        attn_scores[:, :, :, :-T_q] += attention_metadata.context_bias.unsqueeze(1)
+        # Apply attention bias to query.
+        attn_scores[:, :, :, -T_q:] += attention_metadata.query_bias.unsqueeze(1)
         # Compute softmax of scores.
         # [B, num_heads, T_q, T]
         attn_probs = F.softmax(attn_scores, dim=-1)

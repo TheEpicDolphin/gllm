@@ -132,7 +132,7 @@ async def test_batched_generation_correctness(prompts: list[str]):
     for batched_result, individual_result in zip(batched_results, individual_results):
         for breq_logprobs, ireq_logprobs in zip(batched_result.logprobs, individual_result.logprobs):
             # Compare logprobs for approximate equality.
-            assert math.isclose(breq_logprobs[0], breq_logprobs[0], rel_tol=1e-5, abs_tol=1e-8)
+            assert math.isclose(breq_logprobs[0], ireq_logprobs[0], rel_tol=1e-5, abs_tol=1e-5)
             # Compare tokens for exact equality.
             assert breq_logprobs[1] == ireq_logprobs[1]
         assert batched_result.text == individual_result.text
