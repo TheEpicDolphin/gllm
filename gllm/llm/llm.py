@@ -238,41 +238,35 @@ class LLM:
         block_table = block_table[:bs, :max_num_blocks]
         context_lens = seq_lens - query_lens
         
-        # Update slot mapping.
+        # Create KV cache slot mapping.
         # [B, max_num_blocks, block_size]
         slot_mapping = block_size * block_table.unsqueeze(2) + self.block_offsets
         # [B, max_num_blocks * block_size]
         slot_mapping = slot_mapping.view(bs, -1)
-        # [B, T]
-        slot_mapping = slot_mapping[:, :max_seq_len].contiguous()
         
-        # Create padded slot mapping.
+        # Apply padding to slot mapping and context. Padding is needed
+        # to align variable length sequences during attention.
         max_context_len = context_lens.max()
         padded_slot_mapping = torch.zeros(
             (bs, max_context_len + max_query_len),
             dtype=slot_mapping.dtype,
             device=self.device,
         )
-        context_padding = max_context_len - context_lens
-        for i in range(bs):
-            padding = context_padding[i].item()
-            seq_len = seq_lens[i].item()
-            padded_slot_mapping[i, padding:padding + seq_len] = slot_mapping[i, :seq_len]
-        
-        # Update query slot mapping.
-        query_slot_mapping = padded_slot_mapping[:, -max_query_len:].contiguous()
-        
-        # Update attention context bias.
         context_bias = torch.zeros(
             (bs, max_query_len, max_context_len),
             dtype=self.model.dtype,
             device=self.device,
         )
-        context_padding_mask = padded_slot_mapping[:, :-max_query_len] == 0
-        context_padding_mask = context_padding_mask.unsqueeze(1).expand_as(context_bias)
-        context_bias[context_padding_mask] = float("-inf")
+        for i in range(bs):
+            padding = max_context_len - context_lens[i]
+            seq_len = seq_lens[i]
+            padded_slot_mapping[i, padding:padding + seq_len] = slot_mapping[i, :seq_len]
+            context_bias[i, :, :padding] = float("-inf")
         
-        # Update attention query bias.
+        # Create query slot mapping.
+        query_slot_mapping = padded_slot_mapping[:, -max_query_len:].contiguous()
+        
+        # Create causal attention bias for query.
         # [T_q, T_q]
         query_bias = torch.full(
             (max_query_len, max_query_len),
@@ -280,7 +274,6 @@ class LLM:
             dtype=self.model.dtype,
             device=self.device,
         )
-        # Causal mask.
         query_bias.triu_(diagonal=1)
         # [B, T_q, T_q]
         query_bias = query_bias.expand(bs, -1, -1).contiguous()
