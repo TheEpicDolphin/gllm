@@ -2,8 +2,6 @@
 
 gLLM is a from-scratch **LLM inference engine** implemented in PyTorch. The project deliberately avoids high-level inference frameworks in order to explicitly implement the mechanics used by production systems such as vLLM, ExLlama, and optimized HuggingFace inference stacks.
 
----
-
 ## Features
 
 ### Core Inference
@@ -32,8 +30,6 @@ gLLM is a from-scratch **LLM inference engine** implemented in PyTorch. The proj
   - Attention: attention kernels and KV cache integration
 - Designed for extensibility (speculative decoding, quantization, multi-GPU)
 
----
-
 ## Architecture Overview
 
 User Requests
@@ -52,23 +48,20 @@ Next Token
 
 Each decode step dynamically batches active requests while reusing cached key/value blocks to minimize memory movement and recomputation.
 
----
-
 ## Project Structure
-
+```
 gllm/
-├── engine/ # Request scheduling & engine loop
-├── llm/ # High-level LLM interface
-├── model/ # Transformer layers & attention
-├── scheduler/ # Request state tracking
-├── sample/ # Token sampling & logprobs
-├── config/ # Model and generation configuration
-└── utils/ # Helper utilities
-
----
+├── engine/      # Request scheduling & engine loop
+├── llm/         # High-level LLM interface
+├── model/       # Transformer layers & attention
+├── scheduler/   # Request state tracking
+├── sample/      # Token sampling & logprobs
+├── config/      # Model and generation configuration
+└── utils/       # Helper utilities
+tests/           # Unit & integration tests
+```
 
 ## Example Usage
-
 ```python
 from gllm.engine import LLMEngine, GeneratorParams, GenerationRequest
 
@@ -128,5 +121,4 @@ This project is intended for educational and experimental purposes.
 It is not a drop-in replacement for production inference engines. Thought, hopefully one day it will be.
 
 ## Author
-Giancarlo Delfin
-AI Systems Engineer at Meta focused on LLM inference, systems performance, and model serving.
+Giancarlo Delfin - AI Systems Engineer at Meta focused on LLM inference, systems performance, and model serving.
