@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from gllm.config.model_config import ModelConfig
+from gllm.model.layers.linear import Linear
 
 @dataclass
 class AttentionMetadata:
@@ -45,14 +46,20 @@ class Attention:
         
         attn_prefix = f"model.layers.{layer_idx}.self_attn"
         dtype = model_config.dtype
+        
         # [hidden_size, num_q_heads * head_dim]
-        self.W_q = safetensors[f"{attn_prefix}.q_proj.weight"].to(dtype)
+        W_q = safetensors[f"{attn_prefix}.q_proj.weight"].to(dtype)
         # [hidden_size, num_kv_heads * head_dim]
-        self.W_k = safetensors[f"{attn_prefix}.k_proj.weight"].to(dtype)
+        W_k = safetensors[f"{attn_prefix}.k_proj.weight"].to(dtype)
         # [hidden_size, num_kv_heads * head_dim]
-        self.W_v = safetensors[f"{attn_prefix}.v_proj.weight"].to(dtype)
+        W_v = safetensors[f"{attn_prefix}.v_proj.weight"].to(dtype)
         # [num_q_heads * head_dim, hidden_size]
-        self.W_o = safetensors[f"{attn_prefix}.o_proj.weight"].to(dtype)
+        W_o = safetensors[f"{attn_prefix}.o_proj.weight"].to(dtype)
+        
+        self.linear_q = Linear(W_q)
+        self.linear_k = Linear(W_k)
+        self.linear_v = Linear(W_v)
+        self.linear_o = Linear(W_o)
     
     
     def apply_rope(
@@ -231,19 +238,12 @@ class Attention:
         B, T_q, hidden_size = x.shape
         assert hidden_size == self.hidden_size
         
-        # Load attention weights on GPU.
-        device = x.device
-        W_q = self.W_q.to(device)
-        W_k = self.W_k.to(device)
-        W_v = self.W_v.to(device)
-        W_o = self.W_o.to(device)
-
         # Transform using q, k, v weight matrices.
         # [B, T_q, num_q_heads * head_dim]
-        q = F.linear(x, W_q)
+        q = self.linear_q.forward(x)
         # [B, T_q, num_kv_heads * head_dim]
-        k = F.linear(x, W_k)
-        v = F.linear(x, W_v)
+        k = self.linear_k.forward(x)
+        v = self.linear_v.forward(x)
         
         # [B, T_q, num_q_heads, head_dim]
         q = q.view(B, T_q, self.num_q_heads, self.head_dim)
@@ -262,4 +262,4 @@ class Attention:
         
         # [B, T_q, hidden_size]
         attn_out = attn_out.view(B, T_q, -1)
-        return F.linear(attn_out, W_o)
+        return self.linear_o.forward(attn_out)

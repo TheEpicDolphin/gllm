@@ -24,7 +24,7 @@ class LLMEngine(LLMEngineBase):
 
     def _get_enqueued_requests(
         self,
-        block: bool,
+        blocking: bool,
     ) -> tuple[list[GenerationRequest], list[asyncio.Future]]:
         reqs = []
         futures = []
@@ -155,8 +155,8 @@ class LLMEngine(LLMEngineBase):
             active_reqs.extend(new_reqs)
             
             input_batch = self.llm.prepare_batch(active_reqs)
-            sampled_token_ids = self.llm.decode_step(input_batch)
-            self._update_requests(active_reqs, sampled_token_ids)
+            sampled_token_ids, logprobs = self.llm.decode_step(input_batch)
+            self._update_requests(active_reqs, sampled_token_ids, logprobs)
             
             # Remove finished requests.
             for idx in range(len(active_reqs) - 1, -1, -1):

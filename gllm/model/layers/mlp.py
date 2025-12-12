@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from gllm.config.model_config import ActivationFunction, ModelConfig
+from gllm.model.layers.linear import Linear
 
 class MLP:
     def __init__(
@@ -12,9 +13,13 @@ class MLP:
     ):
         mlp_prefix = f"model.layers.{layer_idx}.mlp"
         dtype = model_config.dtype
-        self.W_down = safetensors[f"{mlp_prefix}.down_proj.weight"].to(dtype)
-        self.W_gate = safetensors[f"{mlp_prefix}.gate_proj.weight"].to(dtype)
-        self.W_up = safetensors[f"{mlp_prefix}.up_proj.weight"].to(dtype)
+        W_down = safetensors[f"{mlp_prefix}.down_proj.weight"].to(dtype)
+        W_gate = safetensors[f"{mlp_prefix}.gate_proj.weight"].to(dtype)
+        W_up = safetensors[f"{mlp_prefix}.up_proj.weight"].to(dtype)
+        
+        self.linear_down = Linear(W_down)
+        self.linear_gate = Linear(W_gate)
+        self.linear_up = Linear(W_up)
 
         if model_config.act_func == ActivationFunction.SILU:
             self.act_func = self.silu
@@ -23,14 +28,9 @@ class MLP:
 
 
     def silu(self, x: torch.Tensor) -> torch.Tensor:
-        device = x.device
-        W_down = self.W_down.to(device)
-        W_gate = self.W_gate.to(device)
-        W_up = self.W_up.to(device)
-        
-        G = F.linear(x, W_gate)
-        U = F.linear(x, W_up)
-        return F.linear(F.silu(G) * U, W_down)
+        G = self.linear_gate.forward(x)
+        U = self.linear_up.forward(x)
+        return self.linear_down.forward(F.silu(G) * U)
 
 
     def forward(
