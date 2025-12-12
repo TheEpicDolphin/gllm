@@ -49,9 +49,8 @@ tests/           # Unit & integration tests
 
 ## Example Usage
 ```python
-from gllm.engine import LLMEngine, GeneratorParams, GenerationRequest
+from gllm.engine import GeneratorParams, GenerationRequest, LLMEngine
 
-# Generate using gllm engine.
 llm_engine = LLMEngine(
     hf_model=HuggingFaceModel.LLAMA_3_2_1B_INSTUCT,
     gen_params=GeneratorParams(
