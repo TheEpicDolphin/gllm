@@ -32,21 +32,7 @@ gLLM is a from-scratch **LLM inference engine** implemented in PyTorch. The proj
 
 ## Architecture Overview
 
-User Requests
-↓
-LLMEngine (Scheduler)
-↓
-Batch Construction
-↓
-Attention + Paged KV Cache
-↓
-Logits
-↓
-Sampler (top-k / top-p)
-↓
-Next Token
-
-Each decode step dynamically batches active requests while reusing cached key/value blocks to minimize memory movement and recomputation.
+User Requests -> LLMEngine (Scheduler) -> Batch Construction -> Attention + Paged KV Cache -> Logits -> Sampler (top-k / top-p) -> Next Token
 
 ## Project Structure
 ```
