@@ -51,7 +51,7 @@ tests/           # Unit & integration tests
 ```python
 from gllm.engine import GeneratorParams, GenerationRequest, LLMEngine
 
-llm_engine = LLMEngine(
+engine = LLMEngine(
     hf_model=HuggingFaceModel.LLAMA_3_2_1B_INSTUCT,
     gen_params=GeneratorParams(
         block_size=16,
@@ -68,8 +68,7 @@ req = GenerationRequest(
     top_k=50,
     top_p=0.95,
 )
-future = engine.enqueue_request(req)
-result = await future
+result = await engine.enqueue_request(req)
 
 print(result.text)
 ```
