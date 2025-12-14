@@ -1,6 +1,6 @@
-# gLLM — A Minimal LLM Inference Engine from Scratch
+# gLLM — A Minimal LLM Inference Engine optimized for gaming GPUs
 
-gLLM is a from-scratch **LLM inference engine** implemented in PyTorch. The project deliberately avoids high-level inference frameworks in order to explicitly implement the mechanics used by production systems such as vLLM, ExLlama, and optimized HuggingFace inference stacks.
+gLLM is a from-scratch **LLM inference engine** implemented in PyTorch and optimized for running locally on consumer gaming GPUs. This project deliberately avoids high-level inference frameworks in order to implement the techniques used by production systems such as vLLM, ExLlama, and optimized HuggingFace inference stacks. This project serves both as a learning exercise for me and as a tool for training and running AI in games, enabling unique gameplay experiences. I hope that one day others can benefit from this tool as well.
 
 ## Features
 
@@ -11,24 +11,17 @@ gLLM is a from-scratch **LLM inference engine** implemented in PyTorch. The proj
 - Per-token log-probability tracking
 
 ### Attention & KV Cache
-- Multi-head self-attention with Rotary Position Embeddings (RoPE)
-- Paged KV cache with block-based allocation and reuse
+- Multi-headed self-attention with Rotary Position Embeddings (RoPE)
+- Paged KV caching with block-based allocation and reuse
 - Efficient separation of context and query attention
 - Attention bias construction for padded and causal sequences
 
 ### Engine & Scheduling
-- Request scheduling engine supporting multiple concurrent generation requests
-- Dynamic request batching across decode steps
+- Processing multiple generation requests concurrently
+- Continuous batching of incoming requests
 - Request lifecycle management (enqueue → generate → finish)
-- Async-friendly interface using asyncio.Future
 
-### Modular Design
-- Clean separation of concerns:
-  - LLM: model execution and attention metadata
-  - Sampler: token sampling and logprob computation
-  - LLMEngine: request scheduling and batching
-  - Attention: attention kernels and KV cache integration
-- Designed for extensibility (speculative decoding, quantization, multi-GPU)
+Only Llama 3.1 models are currently supported. I plan to support more in the future!
 
 ## Architecture Overview
 
@@ -43,7 +36,7 @@ The sampler supports:
 
 Sampling flow:
 1. Reduce logits to a per-request top-k candidate set
-2. Apply top-p masking on sorted logits
+2. Apply top-p masking on sorted top-k logits
 3. Sample via multinomial draw
 4. Compute logprobs from the original unfiltered distribution
 
@@ -84,7 +77,7 @@ Below is my comparison of engine performance for gLLM vs HF's transformers libra
 | 8 | 1024 | 1 | 0.000983     | 0.000537     |
 | 8 | 1024 | 4 | 0.000983     | 0.001680     |
 
-gLLM's prefill beats that of HF, across all batch sizes. However, seems like gLLM's decoding needs improvement. Will investigate further.
+gLLM's prefill beats that of HF, across all batch sizes. However, gLLM's decode needs is currently lagging and needs improvement. Will investigate further.
 
 ## Testing
 Basic correctness tests can be run using pytest. They compare outputs with huggingface transformers, which is used as a baseline for this engine.
@@ -129,19 +122,14 @@ print(result.text)
 ```
 
 ## Future Extensions
-- Post-training with LoRa
 - Speculative decoding
+- Prefix caching
+- Post-training with LoRa
 - FP8 Quantization
 - FlashAttention / Triton kernels
-
-## Motivations
-- Learn how LLMs work under the hood.
-- I love optimizing stuff.
-- I want to apply this technology to gaming. For example: chess AI, realistic NPC dialogue, etc.
-
-## Disclaimer
-This project is intended for educational and experimental purposes.
-It is not a drop-in replacement for production inference engines. Thought, hopefully one day it will be.
+- Mixture of Experts
+- Other models
+- ... and most importantly, a framework for training game AI for general tasks
 
 ## Author
-Giancarlo Delfin - AI Systems Engineer at Meta focused on LLM inference, systems performance, and model serving.
+Giancarlo Delfin - AI Systems Engineer at Meta interested in LLM inference, game development, and optimizing systems
