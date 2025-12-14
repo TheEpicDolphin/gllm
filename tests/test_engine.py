@@ -2,11 +2,8 @@ import asyncio
 import math
 import pytest
 
-from gllm.config.generator_params import GeneratorParams
 from gllm.engine.hf_llm_engine import HuggingFaceLLMEngine
-from gllm.engine.llm_engine import LLMEngine
-from gllm.engine.llm_engine_base import GenerationRequest
-from gllm.llm.llm import LLM
+from gllm.engine.llm_engine import GenerationRequest, GeneratorParams, LLMEngine
 from gllm.model.model import HuggingFaceModel
 
 
@@ -58,11 +55,9 @@ async def test_individual_generation_correctness(prompt: str):
     
     # Generate using gllm engine.
     llm_engine = LLMEngine(
-        LLM(
-            hf_model=model,
-            gen_params=gen_params,
-            device=device,
-        )
+        hf_model=model,
+        gen_params=gen_params,
+        device=device,
     )
     actual = llm_engine.generate([request])[0]
     del llm_engine
@@ -116,11 +111,9 @@ async def test_batched_generation_correctness(prompts: list[str]):
     
     # Create LLM engine.
     llm_engine = LLMEngine(
-        LLM(
-            hf_model=model,
-            gen_params=gen_params,
-            device=device,
-        )
+        hf_model=model,
+        gen_params=gen_params,
+        device=device,
     )
     # Generate in batch.
     batched_results = llm_engine.generate(requests)

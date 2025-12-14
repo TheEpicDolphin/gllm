@@ -3,18 +3,28 @@ import uuid
 import queue
 from dataclasses import dataclass
 
+from gllm.config.generator_params import GeneratorParams
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, LLMEngineBase, TokenLogProbs
 from gllm.llm.llm import LLM
+from gllm.model.model import HuggingFaceModel
 from gllm.scheduler.request_state import RequestState
 
 
 class LLMEngine(LLMEngineBase):
     def __init__(
         self,
-        llm: LLM,
+        hf_model: HuggingFaceModel,
+        gen_params: GeneratorParams,
+        device: str,
+        local_cache_dir: str | None = None,
     ):
         self.alive = False
-        self.llm = llm
+        self.llm = LLM(
+            hf_model=hf_model,
+            gen_params=gen_params,
+            device=device,
+            local_cache_dir=local_cache_dir,
+        )
         self.request_queue = queue.Queue()
         
 
@@ -44,6 +54,7 @@ class LLMEngine(LLMEngineBase):
     
     def _schedule_requests(
         self,
+        num_active_reqs: int,
         reqs: list[GenerationRequest],
         futures: list[asyncio.Future] | None = None
     ) -> list[RequestState]:
@@ -70,7 +81,7 @@ class LLMEngine(LLMEngineBase):
                         f"max_new_tokens must be >= 0."
                     )
                     
-                if len(reqs) == self.llm.max_batch_size:
+                if (num_active_reqs + len(scheduled_reqs)) == self.llm.max_batch_size:
                     raise RuntimeError(
                         f"Failed to enqueue request with error: Batch size limit ({self.llm.max_batch_size}) has been reached."
                     )
@@ -151,7 +162,7 @@ class LLMEngine(LLMEngineBase):
             enqueued_reqs, futures = self._get_enqueued_requests(block=not in_progress)
             
             # Schedule enqueued requests. Some may be rejected.
-            new_reqs = self._schedule_requests(enqueued_reqs, futures)
+            new_reqs = self._schedule_requests(len(active_reqs), enqueued_reqs, futures)
             active_reqs.extend(new_reqs)
             
             input_batch = self.llm.prepare_batch(active_reqs)
@@ -175,7 +186,7 @@ class LLMEngine(LLMEngineBase):
     
     def generate(self, reqs: list[GenerationRequest]) -> list[GenerationResult]:
         results = [None for req in reqs]
-        active_reqs = self._schedule_requests(reqs)
+        active_reqs = self._schedule_requests(0, reqs)
         index_map = {req.id: idx for idx, req in enumerate(active_reqs)}
         while len(active_reqs) > 0:
             input_batch = self.llm.prepare_batch(active_reqs)
