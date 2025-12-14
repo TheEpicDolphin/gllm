@@ -1,4 +1,4 @@
-# gLLM — A Minimal LLM Inference Engine optimized for gaming GPUs
+# gLLM — A Minimal LLM Inference Engine Optimized for Gaming GPUs
 
 gLLM is a from-scratch **LLM inference engine** implemented in PyTorch and optimized for running locally on consumer gaming GPUs. This project deliberately avoids high-level inference frameworks in order to implement the techniques used by production systems such as vLLM, ExLlama, and optimized HuggingFace inference stacks. This project serves both as a learning exercise for me and as a tool for training and running AI in games, enabling unique gameplay experiences. I hope that one day others can benefit from this tool as well.
 
