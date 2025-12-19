@@ -40,45 +40,6 @@ Sampling flow:
 3. Sample via multinomial draw
 4. Compute logprobs from the original unfiltered distribution
 
-## Benchmarks
-Below is my comparison of engine performance for gLLM vs HF's transformers library.
-| Batch Size | Context Length | Generation Length | gLLM tok/s | HF tok/s |
-|---|------|---|--------------|--------------|
-| 1 | 32   | 1 | 0.000173     | 0.000101     |
-| 1 | 32   | 4 | 0.000227     | 0.000438     |
-| 1 | 128  | 1 | 0.000193     | 0.000111     |
-| 1 | 128  | 4 | 0.000228     | 0.000442     |
-| 1 | 512  | 1 | 0.000191     | 0.000108     |
-| 1 | 512  | 4 | 0.000224     | 0.000445     |
-| 1 | 1024 | 1 | 0.000184     | 0.000106     |
-| 1 | 1024 | 4 | 0.000222     | 0.000420     |
-| 2 | 32   | 1 | 0.000386     | 0.000227     |
-| 2 | 32   | 4 | 0.000452     | 0.000864     |
-| 2 | 128  | 1 | 0.000379     | 0.000221     |
-| 2 | 128  | 4 | 0.000448     | 0.000885     |
-| 2 | 512  | 1 | 0.000364     | 0.000208     |
-| 2 | 512  | 4 | 0.000438     | 0.000838     |
-| 2 | 1024 | 1 | 0.000343     | 0.000192     |
-| 2 | 1024 | 4 | 0.000431     | 0.000787     |
-| 4 | 32   | 1 | 0.000766     | 0.000444     |
-| 4 | 32   | 4 | 0.000900     | 0.001774     |
-| 4 | 128  | 1 | 0.000751     | 0.000413     |
-| 4 | 128  | 4 | 0.000894     | 0.001726     |
-| 4 | 512  | 1 | 0.000695     | 0.000406     |
-| 4 | 512  | 4 | 0.000868     | 0.001622     |
-| 4 | 1024 | 1 | 0.000611     | 0.000368     |
-| 4 | 1024 | 4 | 0.000830     | 0.001467     |
-| 8 | 32   | 1 | 0.001526     | 0.000882     |
-| 8 | 32   | 4 | 0.001790     | 0.003485     |
-| 8 | 128  | 1 | 0.001447     | 0.000843     |
-| 8 | 128  | 4 | 0.001768     | 0.003354     |
-| 8 | 512  | 1 | 0.001229     | 0.000740     |
-| 8 | 512  | 4 | 0.001668     | 0.002890     |
-| 8 | 1024 | 1 | 0.000983     | 0.000537     |
-| 8 | 1024 | 4 | 0.000983     | 0.001680     |
-
-gLLM's prefill beats that of HF, across all batch sizes. However, gLLM's decode needs is currently lagging and needs improvement. Will investigate further.
-
 ## Testing
 Basic correctness tests can be run using pytest. They compare outputs with huggingface transformers, which is used as a baseline for this engine.
 
