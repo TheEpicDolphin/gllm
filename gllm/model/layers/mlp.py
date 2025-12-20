@@ -2,15 +2,18 @@ import torch
 import torch.nn.functional as F
 
 from gllm.config.model_config import ActivationFunction, ModelConfig
+from gllm.model.layers.base_module import BaseModule
 from gllm.model.layers.linear import Linear
 
-class MLP:
+class MLP(BaseModule):
     def __init__(
         self,
         layer_idx: int,
         model_config: ModelConfig,
         safetensors
     ):
+        super().__init__(None)
+        
         mlp_prefix = f"model.layers.{layer_idx}.mlp"
         dtype = model_config.dtype
         W_down = safetensors[f"{mlp_prefix}.down_proj.weight"].to(dtype)
@@ -20,6 +23,12 @@ class MLP:
         self.linear_down = Linear(W_down)
         self.linear_gate = Linear(W_gate)
         self.linear_up = Linear(W_up)
+        
+        self.child_modules = [
+            self.linear_down,
+            self.linear_gate,
+            self.linear_up
+        ]
 
         if model_config.act_func == ActivationFunction.SILU:
             self.act_func = self.silu

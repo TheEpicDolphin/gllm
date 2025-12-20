@@ -63,7 +63,11 @@ async def test_individual_generation_correctness(prompt: str):
     del llm_engine
     
     # Generate using huggingface transformers engine.
-    hf_llm_engine = HuggingFaceLLMEngine(model, device)
+    hf_llm_engine = HuggingFaceLLMEngine(
+        hf_model=model,
+        gen_params=gen_params,
+        device=device
+    )
     expected = hf_llm_engine.generate([request])[0]
     del hf_llm_engine
     

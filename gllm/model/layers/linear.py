@@ -1,18 +1,20 @@
 import torch
 import torch.nn.functional as F
 
-class Linear:
+from gllm.model.layers.base_module import BaseModule
+
+class Linear(BaseModule):
     def __init__(
         self,
-        W: torch.Tensor,
+        weights: torch.Tensor,
     ):
-        self.W = W
+        super().__init__(weights)
+
 
     def forward(
         self,
         x: torch.Tensor
     ) -> torch.Tensor:
-        # Load weights onto same device as input.
-        W = self.W.to(x.device)
+        weights = self.get_weights(x.device)
         # out = W @ x
-        return F.linear(x, W)
+        return F.linear(x, weights)

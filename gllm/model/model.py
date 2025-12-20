@@ -123,6 +123,10 @@ class Model:
         # [T_max, head_dim // 2]
         self.sin_pos_cache = torch.sin(p_theta_m).to(self.dtype)
         
+        # Allocate staging buffers using the first transformer layer.
+        # All layers are expected to have the same weight shapes.
+        self.staging_buffers = self.layers[0].allocate_staging_buffers()
+        
 
     @property
     def eos_token_ids(self) -> list[int]:
@@ -162,6 +166,7 @@ class Model:
         self,
         token_ids: torch.Tensor | list[int]
     ) -> torch.Tensor:
+        # Load embedding weights to device.
         embedding_gpu = self.embedding.to(self.device)
         embeddings = embedding_gpu[token_ids]
         return embeddings
@@ -180,8 +185,15 @@ class Model:
         cos_pos = self.cos_pos_cache[positions]
         sin_pos = self.sin_pos_cache[positions]
         
+        # Preload first layer's weights to device.
+        device = hidden_states.device
+        
         residual = None
         for idx, layer in enumerate(self.layers):
+            if idx < len(self.layers) - 1:
+                # Preload the next layer's weights to device.
+                self.layers[idx + 1].preload_weights(device, self.staging_buffers)
+                
             hidden_states, residual = layer.forward(
                 hidden_states,
                 residual,
@@ -190,6 +202,9 @@ class Model:
                 self.paged_kv_cache.get_layer_kv_cache(idx),
                 attention_metadata
             )
+            
+            # Unload the current layer's weights from the device.
+            layer.unload_weights()
         return self.final_norm.forward(hidden_states + residual)
 
 
@@ -198,5 +213,6 @@ class Model:
         # [B, T, hidden_size]
         x: torch.Tensor
     ) -> torch.Tensor:
+        # Load embedding weights to device.
         embedding_gpu = self.embedding.to(self.device)
         return F.linear(x, embedding_gpu)

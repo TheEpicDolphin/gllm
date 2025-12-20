@@ -1,20 +1,22 @@
 import torch
 
-class RMSNorm:
+from gllm.model.layers.base_module import BaseModule
+
+class RMSNorm(BaseModule):
     def __init__(
         self,
         weights: torch.Tensor,
         eps: float,
     ):
-        self.weights = weights
+        super().__init__(weights)
         self.eps = eps
-
+    
+        
     def forward(
         self,
         x: torch.Tensor
     ) -> torch.Tensor:
-        weights_gpu = self.weights.to(x.device)
-        
+        weights = self.get_weights(x.device)
         x_sqr_mean = torch.mean(x * x, -1, keepdim=True)
         rms = torch.sqrt(x_sqr_mean + self.eps)
-        return (x / rms) * weights_gpu
+        return (x / rms) * weights

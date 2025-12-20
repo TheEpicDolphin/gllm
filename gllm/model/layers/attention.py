@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from gllm.config.model_config import ModelConfig
+from gllm.model.layers.base_module import BaseModule
 from gllm.model.layers.linear import Linear
 
 @dataclass
@@ -25,13 +26,15 @@ class AttentionMetadata:
     # [B, T_q, T_q]
     query_bias: torch.Tensor
 
-class Attention:
+class Attention(BaseModule):
     def __init__(
         self,
         layer_idx: int,
         model_config: ModelConfig,
         safetensors,
     ):
+        super().__init__(None)
+        
         self.layer_idx = layer_idx
         self.num_q_heads = model_config.num_attn_heads
         self.num_kv_heads = model_config.num_kv_heads
@@ -60,6 +63,13 @@ class Attention:
         self.linear_k = Linear(W_k)
         self.linear_v = Linear(W_v)
         self.linear_o = Linear(W_o)
+        
+        self.child_modules = [
+            self.linear_q,
+            self.linear_k,
+            self.linear_v,
+            self.linear_o,
+        ]
     
     
     def apply_rope(
