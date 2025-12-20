@@ -322,12 +322,15 @@ class LLM:
         # [B, T_q, hidden_size]
         token_embeddings = self.model.get_token_embeddings(input_token_ids)
         assert not torch.isnan(token_embeddings).any()
-        # [B, T_q, hidden_size]
-        output_hidden_states = self.model.forward(
-            token_embeddings,
-            positions,
-            attn_metadata
-        )
+        
+        with torch.cuda.nvtx.range("model_forward"):
+            # [B, T_q, hidden_size]
+            output_hidden_states = self.model.forward(
+                token_embeddings,
+                positions,
+                attn_metadata
+            )
+        
         assert not torch.isnan(output_hidden_states).any()
         # [B, T_q, vocab_size]
         logits = self.model.compute_logits(output_hidden_states)
@@ -335,11 +338,13 @@ class LLM:
         query_lens = attn_metadata.query_lens
         # [B, vocab_size]
         final_logits = logits[self.arange[:query_lens.size(0)], query_lens - 1]
-        # [B], [B]
-        sampled_token_ids, logprobs = self.sampler.forward(
-            final_logits,
-            input_batch.sampling_metadata
-        )
+        
+        with torch.cuda.nvtx.range("sampling"):
+            # [B], [B]
+            sampled_token_ids, logprobs = self.sampler.forward(
+                final_logits,
+                input_batch.sampling_metadata
+            )
         return sampled_token_ids.tolist(), logprobs
         
         
