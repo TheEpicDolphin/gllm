@@ -1,24 +1,29 @@
 import argparse
 
+from benchmarks.utils import benchmark
 from gllm.engine.llm_engine import LLMEngine
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
-    parser.add_argument("--batch-size", required=True)
-    parser.add_argument("--context-len", required=True)
-    parser.add_argument("--gen-len", required=True)
+    parser.add_argument("--batch-size", required=True, type=int)
+    parser.add_argument("--context-len", required=True, type=int)
+    parser.add_argument("--gen-len", required=True, type=int)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
-    benchmark(
-        engine_cls=typeof(LLMEngine),
+    result = benchmark(
+        engine_cls=LLMEngine,
         model=args.model,
         batch_size=args.batch_size,
         context_len=args.context_len,
         gen_len=args.gen_len,
         device=args.device,
+    )
+    
+    print(
+        f"[B={args.batch_size} C={args.context_len} G={args.gen_len}] duration: {result.duration_ms:.6f} ms"
     )
 
 

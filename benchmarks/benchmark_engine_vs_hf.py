@@ -1,7 +1,7 @@
 import argparse
 
-from gllm.engine.llm_engine import LLMEngine
 from benchmarks.utils import benchmark
+from gllm.engine.llm_engine import LLMEngine
 from gllm.engine.hf_llm_engine import HuggingFaceLLMEngine
 
 
