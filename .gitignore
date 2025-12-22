@@ -33,3 +33,5 @@ htmlcov/
 ruff_cache/
 pylint-report.txt
 pylint.log
+
+traces/

@@ -7,6 +7,7 @@ from enum import StrEnum
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from tokenizers import Tokenizer
+from torch.profiler import record_function
 
 from gllm.config.generator_params import GeneratorParams
 from gllm.config.model_config import ModelConfig
@@ -34,21 +35,15 @@ class Model:
         if local_cache_dir is None:
             # Use default cache directory.
             local_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "gllm")
+            
+        self.gen_params = gen_params
+        self.device = torch.device(device)
         
         # Create directories for model and tokenizer files.
         model_cache_dir = os.path.join(local_cache_dir, "models")
         os.makedirs(model_cache_dir, exist_ok=True)
         tokenizer_cache_dir = os.path.join(local_cache_dir, "tokenizers")
         os.makedirs(tokenizer_cache_dir, exist_ok=True)
-    
-        # Download model safetensors.
-        local_model_path = hf_hub_download(
-            repo_id=hf_model,
-            filename="model.safetensors",
-            cache_dir=model_cache_dir,
-        )
-        # Tensors are kept in CPU RAM and loaded on GPU only when needed.
-        safetensors = load_file(local_model_path, device=CPU_DEVICE)
 
         # Download tokenizer.
         local_tokenizer_path = hf_hub_download(
@@ -80,6 +75,16 @@ class Model:
             rope_theta=config["rope_theta"],
         )
         
+        # Download model safetensors.
+        local_model_path = hf_hub_download(
+            repo_id=hf_model,
+            filename="model.safetensors",
+            cache_dir=model_cache_dir,
+        )
+        # If cpu_offloading is true, weights are kept in CPU RAM and loaded to GPU only when needed.
+        initial_weights_device = CPU_DEVICE if self.cpu_offloading else device
+        safetensors = load_file(local_model_path, device=initial_weights_device)
+        
         # Initialize paged KV cache.
         self.paged_kv_cache = PagedKVCache(
             model_config=self.model_config,
@@ -108,7 +113,6 @@ class Model:
         # heead by multiplying with the hidden states to obtain the
         # logits.
         self.embedding = safetensors["model.embed_tokens.weight"].to(self.dtype)
-        self.device = torch.device(device)
         
         # Construct RoPE sin/cos caches for positions up to T_max.
         # [T_max]
@@ -123,10 +127,16 @@ class Model:
         # [T_max, head_dim // 2]
         self.sin_pos_cache = torch.sin(p_theta_m).to(self.dtype)
         
-        # Allocate staging buffers using the first transformer layer.
-        # All layers are expected to have the same weight shapes.
-        self.staging_buffers = self.layers[0].allocate_staging_buffers()
+        if self.cpu_offloading:
+            # Stream for preloading weights to device.
+            self.transfer_stream = torch.cuda.Stream()
+            # Allocate staging buffers using the first transformer layer.
+            # All layers are expected to have the same weight shapes.
+            self.transformer_layer_staging_buffers = self.layers[0].allocate_staging_buffers()
         
+    @property
+    def cpu_offloading(self) -> bool:
+        return self.device != "cpu" and self.gen_params.cpu_offloading
 
     @property
     def eos_token_ids(self) -> list[int]:
@@ -170,7 +180,7 @@ class Model:
         embedding_gpu = self.embedding.to(self.device)
         embeddings = embedding_gpu[token_ids]
         return embeddings
-        
+    
 
     def forward(
         self,
@@ -190,22 +200,33 @@ class Model:
         
         residual = None
         for idx, layer in enumerate(self.layers):
-            if idx < len(self.layers) - 1:
-                # Preload the next layer's weights to device.
-                self.layers[idx + 1].preload_weights(device, self.staging_buffers)
-                
-            hidden_states, residual = layer.forward(
-                hidden_states,
-                residual,
-                cos_pos,
-                sin_pos,
-                self.paged_kv_cache.get_layer_kv_cache(idx),
-                attention_metadata
-            )
+            if self.cpu_offloading:
+                # Wait for weights transfer to finish.
+                torch.cuda.current_stream().wait_stream(self.transfer_stream)
+                if idx < len(self.layers) - 1:
+                    with (
+                        torch.cuda.stream(self.transfer_stream),
+                        record_function(f"model.layer.{idx + 1}.preload")
+                    ):
+                        # Preload the next layer's weights to device.
+                        self.layers[idx + 1].preload_weights(device, self.transformer_layer_staging_buffers)
             
-            # Unload the current layer's weights from the device.
-            layer.unload_weights()
-        return self.final_norm.forward(hidden_states + residual)
+            with record_function(f"model.layer.{idx}.forward"):
+                hidden_states, residual = layer.forward(
+                    hidden_states,
+                    residual,
+                    cos_pos,
+                    sin_pos,
+                    self.paged_kv_cache.get_layer_kv_cache(idx),
+                    attention_metadata
+                )
+            
+            if self.cpu_offloading:
+                # Unload the current layer's weights from the device.
+                layer.unload_weights()
+            
+        with record_function("model.final_norm"):
+            return self.final_norm.forward(hidden_states + residual)
 
 
     def compute_logits(

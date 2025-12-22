@@ -18,7 +18,7 @@ class Transformer(BaseModule):
         
         dtype = model_config.dtype
         # Initialize layer input norm.
-        input_layernorm_weights = safetensors[f"model.layers.{layer_idx}.input_layernorm.weight"].to(dtype)
+        input_layernorm_weights = safetensors[f"model.layers.{layer_idx}.input_layernorm.weight"].to(dtype=dtype)
         self.input_norm = RMSNorm(
             weights=input_layernorm_weights,
             eps=model_config.rms_norm_eps
@@ -28,14 +28,11 @@ class Transformer(BaseModule):
         # Initialize MLP.
         self.mlp = MLP(layer_idx, model_config, safetensors)
         # Initialize post-attention norm.
-        post_attn_norm_weights = safetensors[f"model.layers.{layer_idx}.post_attention_layernorm.weight"].to(dtype)
+        post_attn_norm_weights = safetensors[f"model.layers.{layer_idx}.post_attention_layernorm.weight"].to(dtype=dtype)
         self.post_attn_norm = RMSNorm(
             weights=post_attn_norm_weights,
             eps=model_config.rms_norm_eps
         )
-        
-        # Stream for preloading weights to device.
-        self.transfer_stream = torch.cuda.Stream()
         
         self.child_modules = [
             self.input_norm,
@@ -43,15 +40,6 @@ class Transformer(BaseModule):
             self.mlp,
             self.post_attn_norm,
         ]
-    
-    
-    def preload_weights(
-        self,
-        device,
-        staging_buffers: StagingBuffers,
-    ):
-        with torch.cuda.stream(self.transfer_stream):
-            super().preload_weights(device, staging_buffers)
         
 
     def forward(
@@ -69,9 +57,6 @@ class Transformer(BaseModule):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if residual is not None:
             hidden_states += residual
-            
-        # Wait for weights transfer to finish.
-        torch.cuda.current_stream().wait_stream(self.transfer_stream)
             
         # input layernorm
         residual = hidden_states

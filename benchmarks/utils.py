@@ -2,6 +2,7 @@ import argparse
 import time
 import torch
 from dataclasses import dataclass
+from torch.profiler import profile, record_function, ProfilerActivity
 from typing import Type
 
 from gllm.config.generator_params import GeneratorParams
@@ -49,7 +50,8 @@ def measure_engine_generation(
     sync()
 
     t0 = now()
-    results = engine.generate(requests)
+    with record_function("engine_generate"):
+        results = engine.generate(requests)
     sync()
     t1 = now()
 
@@ -64,11 +66,14 @@ def benchmark(
     context_len: int,
     gen_len: int,
     device="cuda",
+    cpu_offloading=False,
+    trace_file: str | None = None,
 ) -> BenchResult:
     gen_params = GeneratorParams(
         block_size=32,
         max_batch_size=batch_size,
         max_seq_len=16384,
+        cpu_offloading=cpu_offloading,
     )
     
     engine = engine_cls(
@@ -83,10 +88,21 @@ def benchmark(
         gen_len,
     )
 
-    duration, peak_mem, _ = measure_engine_generation(
-        engine,
-        requests,
-    )
+    if trace_file:
+        with profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            with_stack=True
+        ) as prof:
+            duration, peak_mem, _ = measure_engine_generation(
+                engine,
+                requests,
+            )
+        prof.export_chrome_trace(trace_file)
+    else:
+        duration, peak_mem, _ = measure_engine_generation(
+            engine,
+            requests,
+        )
 
     return BenchResult(
         batch_size=batch_size,

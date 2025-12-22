@@ -51,13 +51,13 @@ class Attention(BaseModule):
         dtype = model_config.dtype
         
         # [hidden_size, num_q_heads * head_dim]
-        W_q = safetensors[f"{attn_prefix}.q_proj.weight"].to(dtype)
+        W_q = safetensors[f"{attn_prefix}.q_proj.weight"].to(dtype=dtype)
         # [hidden_size, num_kv_heads * head_dim]
-        W_k = safetensors[f"{attn_prefix}.k_proj.weight"].to(dtype)
+        W_k = safetensors[f"{attn_prefix}.k_proj.weight"].to(dtype=dtype)
         # [hidden_size, num_kv_heads * head_dim]
-        W_v = safetensors[f"{attn_prefix}.v_proj.weight"].to(dtype)
+        W_v = safetensors[f"{attn_prefix}.v_proj.weight"].to(dtype=dtype)
         # [num_q_heads * head_dim, hidden_size]
-        W_o = safetensors[f"{attn_prefix}.o_proj.weight"].to(dtype)
+        W_o = safetensors[f"{attn_prefix}.o_proj.weight"].to(dtype=dtype)
         
         self.linear_q = Linear(W_q)
         self.linear_k = Linear(W_k)

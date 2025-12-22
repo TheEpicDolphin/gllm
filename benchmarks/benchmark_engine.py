@@ -11,6 +11,8 @@ def main():
     parser.add_argument("--context-len", required=True, type=int)
     parser.add_argument("--gen-len", required=True, type=int)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--cpu-offloading", action="store_true", help="Enable CPU offloading of model weights")
+    parser.add_argument("--trace-file", default=None)
     args = parser.parse_args()
 
     result = benchmark(
@@ -20,6 +22,8 @@ def main():
         context_len=args.context_len,
         gen_len=args.gen_len,
         device=args.device,
+        cpu_offloading=args.cpu_offloading,
+        trace_file=args.trace_file,
     )
     
     print(
