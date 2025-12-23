@@ -45,18 +45,19 @@ class Attention(BaseModule):
         self.num_groups = self.num_q_heads // self.num_kv_heads
         
         # Sanity check.
-        assert self.head_dim == self.hidden_size // self.num_q_heads
+        # hidden_size = num_q_heads * head_dim
+        assert self.hidden_size == self.num_q_heads * self.head_dim
         
         attn_prefix = f"model.layers.{layer_idx}.self_attn"
         dtype = model_config.dtype
         
-        # [hidden_size, num_q_heads * head_dim]
+        # [hidden_size, hidden_size]
         W_q = safetensors[f"{attn_prefix}.q_proj.weight"].to(dtype=dtype)
         # [hidden_size, num_kv_heads * head_dim]
         W_k = safetensors[f"{attn_prefix}.k_proj.weight"].to(dtype=dtype)
         # [hidden_size, num_kv_heads * head_dim]
         W_v = safetensors[f"{attn_prefix}.v_proj.weight"].to(dtype=dtype)
-        # [num_q_heads * head_dim, hidden_size]
+        # [hidden_size, hidden_size]
         W_o = safetensors[f"{attn_prefix}.o_proj.weight"].to(dtype=dtype)
         
         self.linear_q = Linear(W_q)

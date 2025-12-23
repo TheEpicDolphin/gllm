@@ -16,18 +16,23 @@ class MLP(BaseModule):
         
         mlp_prefix = f"model.layers.{layer_idx}.mlp"
         dtype = model_config.dtype
-        W_down = safetensors[f"{mlp_prefix}.down_proj.weight"].to(dtype)
-        W_gate = safetensors[f"{mlp_prefix}.gate_proj.weight"].to(dtype)
-        W_up = safetensors[f"{mlp_prefix}.up_proj.weight"].to(dtype)
         
-        self.linear_down = Linear(W_down)
-        self.linear_gate = Linear(W_gate)
+        # [intermediate_size, hidden_size]
+        W_up = safetensors[f"{mlp_prefix}.up_proj.weight"].to(dtype)
+        # [intermediate_size, hidden_size]
+        W_gate = safetensors[f"{mlp_prefix}.gate_proj.weight"].to(dtype)
+        # [hidden_size, intermediate_size]
+        W_down = safetensors[f"{mlp_prefix}.down_proj.weight"].to(dtype)
+
+        
         self.linear_up = Linear(W_up)
+        self.linear_gate = Linear(W_gate)
+        self.linear_down = Linear(W_down)
         
         self.child_modules = [
-            self.linear_down,
+            self.linear_up,
             self.linear_gate,
-            self.linear_up
+            self.linear_down,
         ]
 
         if model_config.act_func == ActivationFunction.SILU:
