@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from gllm.config.model_config import ModelConfig
 from gllm.model.layers.base_module import BaseModule
 from gllm.model.layers.linear import Linear
+from gllm.ops.attention.reference_attention import reference_attention
 
 @dataclass
 class AttentionMetadata:
@@ -118,121 +119,6 @@ class Attention(BaseModule):
         ).view(B, T_q, num_kv_heads, -1)
         return q_r, k_r
         
-
-    def naiive_attention(
-        self,
-        # [B, T_q, num_q_heads, head_dim]
-        q: torch.Tensor,
-        # [B, T_q, num_kv_heads, head_dim]
-        k: torch.Tensor,
-        # [B, T_q, num_kv_heads, head_dim]
-        v: torch.Tensor,
-    ) -> torch.Tensor:
-        assert q.shape == k.shape
-        assert k.shape == v.shape
-        B, T_q, num_q_heads, head_dim = q.shape
-        
-        if self.num_groups > 1:
-            # Multi-query attention.
-            # [B, T_q, num_kv_heads, 1, head_dim]
-            k = k.unsqueeze(-2)
-            v = v.unsqueeze(-2)
-            # [B, T_q, num_kv_heads, num_groups, head_dim]
-            k = k.expand(-1, -1, -1, self.num_groups, -1)
-            v = v.expand(-1, -1, -1, self.num_groups, -1)
-            # [B, T_q, num_kv_heads * num_groups, head_dim]
-            k = k.reshape(B, T_q, -1, self.head_dim)
-            v = v.reshape(B, T_q, -1, self.head_dim)
-            
-        # [B, num_heads, T_q, head_dim]
-        q = q.transpose(1, 2)
-        # [B, num_heads, T_q, head_dim]
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-
-        # Compute softmax(Q @ K^T / sqrt(d_k)).
-        # [B, num_heads, T_q, T_q]
-        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        # [B, num_heads, T_q, T_q]
-        attn_probs = F.softmax(attn_scores, dim=-1)
-
-        # Scale values by scores.
-        # [B, num_heads, T_q, head_dim]
-        attn_out = torch.matmul(attn_probs, v)
-        # [B, T_q, num_heads, head_dim]
-        attn_out = attn_out.transpose(1, 2).contiguous()
-        return attn_out
-    
-    def paged_attention(
-        self,
-        # [B, T_q, num_q_heads, head_dim]
-        q: torch.Tensor,
-        # [B, T_q, num_kv_heads, head_dim]
-        k: torch.Tensor,
-        # [B, T_q, num_kv_heads, head_dim]
-        v: torch.Tensor,
-        # [2, max_num_blocks * block_size, num_kv_heads, head_dim]
-        kv_cache: torch.Tensor,
-        attention_metadata: AttentionMetadata,
-    ) -> torch.Tensor:
-        assert k.shape == v.shape
-        B, T_q, num_q_heads, head_dim = q.shape
-        _, _, num_kv_heads, _ = kv_cache.shape
-        kv_dtype = kv_cache.dtype
-        
-        # Cache query token K/Vs.
-        # TODO: Remove dummy query slots to reduce copying.
-        # [B, T_q]
-        query_slot_mapping = attention_metadata.query_slot_mapping
-        query_slot_mapping = query_slot_mapping.view(-1)
-        kv_cache[0, query_slot_mapping, :, :] = k.view(-1, num_kv_heads, head_dim).to(kv_dtype)
-        kv_cache[1, query_slot_mapping, :, :] = v.view(-1, num_kv_heads, head_dim).to(kv_dtype)
-        
-        # Get sequence K/Vs.
-        # [B, T]
-        slot_mapping = attention_metadata.slot_mapping
-        # [B * T]
-        slot_mapping = slot_mapping.view(-1)
-        # [B, T, num_kv_heads, head_dim]
-        k = kv_cache[0, slot_mapping, :, :].view(B, -1, num_kv_heads, head_dim).to(q.dtype)
-        v = kv_cache[1, slot_mapping, :, :].view(B, -1, num_kv_heads, head_dim).to(q.dtype)
-        _, T, _, _ = k.shape
-        
-        if self.num_groups > 1:
-            # Multi-query attention.
-            # [B, T, num_kv_heads, 1, head_dim]
-            k = k.unsqueeze(-2)
-            v = v.unsqueeze(-2)
-            # [B, T, num_kv_heads, num_groups, head_dim]
-            k = k.expand(-1, -1, -1, self.num_groups, -1)
-            v = v.expand(-1, -1, -1, self.num_groups, -1)
-            # [B, T, num_kv_heads * num_groups, head_dim]
-            k = k.reshape(B, T, -1, self.head_dim)
-            v = v.reshape(B, T, -1, self.head_dim)
-            
-        # [B, num_heads, T_q, head_dim]
-        q = q.transpose(1, 2)
-        # [B, num_heads, T, head_dim]
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-
-        # Compute attention scores: Q @ K^T / sqrt(d_k).
-        # [B, num_heads, T_q, T]
-        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        # Apply attention bias to context padding.
-        attn_scores[:, :, :, :-T_q] += attention_metadata.context_bias.unsqueeze(1)
-        # Apply attention bias to query.
-        attn_scores[:, :, :, -T_q:] += attention_metadata.query_bias.unsqueeze(1)
-        # Compute softmax of scores.
-        # [B, num_heads, T_q, T]
-        attn_probs = F.softmax(attn_scores, dim=-1)
-        # Scale values by scores.
-        # [B, num_heads, T_q, head_dim]
-        attn_out = torch.matmul(attn_probs, v)
-        # [B, T_q, num_heads, head_dim]
-        attn_out = attn_out.transpose(1, 2).contiguous()
-        return attn_out
-        
     
     def forward(
         self,
@@ -243,7 +129,7 @@ class Attention(BaseModule):
         # [B, T_q, head_dim // 2]
         sin_pos: torch.Tensor,
         # [2, max_num_blocks * block_size, num_kv_heads, head_dim]
-        kv_cache: torch.Tensor | None,
+        kv_cache: torch.Tensor,
         attention_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         B, T_q, hidden_size = x.shape
@@ -264,12 +150,34 @@ class Attention(BaseModule):
         
         # Apply RoPE rotation matrix to q and k.
         q, k = self.apply_rope(q, k, cos_pos, sin_pos)
-
+        
+        # Cache query token K/Vs.
+        # TODO: Remove dummy query slots to reduce copying.
+        # [B, T_q]
+        query_slot_mapping = attention_metadata.query_slot_mapping
+        # [B * T_q]
+        query_slot_mapping = query_slot_mapping.view(-1)
+        kv_dtype = kv_cache.dtype
+        kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+        kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+        
+        # Get sequence K/Vs.
+        # [B, T]
+        slot_mapping = attention_metadata.slot_mapping
+        # [B * T]
+        slot_mapping = slot_mapping.view(-1)
+        # [B, T, num_kv_heads, head_dim]
+        k = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
+        v = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
+        
         # Compute attention.
-        if kv_cache is None:
-            attn_out = self.naiive_attention(q, k, v)
-        else:
-            attn_out = self.paged_attention(q, k, v, kv_cache, attention_metadata)
+        attn_out = reference_attention(
+            q,
+            k,
+            v,
+            attention_metadata.query_bias,
+            attention_metadata.context_bias
+        )
         
         # [B, T_q, hidden_size]
         attn_out = attn_out.view(B, T_q, -1)
