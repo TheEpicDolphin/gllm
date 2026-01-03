@@ -1,5 +1,3 @@
-import math
-
 import torch
 import torch.nn.functional as F
 
@@ -41,7 +39,7 @@ def reference_attention(
 
     # Compute attention scores: Q @ K^T / sqrt(d_k).
     # [B, num_heads, T_q, T]
-    attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(head_dim)
+    attn_scores = torch.matmul(q, k.transpose(-2, -1)) / head_dim**0.5
     # Apply attention bias to context padding.
     attn_scores[:, :, :, :-T_q] += context_bias.unsqueeze(1)
     # Apply attention bias to query.
