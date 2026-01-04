@@ -45,11 +45,15 @@ async def test_flash_attention_correctness(
     # (B, T, H_kv, D)
     k = torch.randn(*kv_shape, dtype=dtype, device=device)
     v = torch.randn(*kv_shape, dtype=dtype, device=device)
-    # [B, T_q, T_q]
-    q_bias = torch.zeros(B, T_q, T_q, dtype=dtype, device=device)
-    # [B, T_q, T - T_q]
-    ctx_bias = torch.zeros(B, T_q, T - T_q, dtype=dtype, device=device)
     
-    fa_out = flash_attention(q, k, v, q_bias, ctx_bias)
-    ref_out = reference_attention(q, k, v, q_bias, ctx_bias)
+    # [B, T_q, T]
+    bias = torch.zeros((B, T_q, T), dtype=dtype, device=device)
+    # Set causal attention bias for query.
+    # [B, T_q, T_q]
+    query_bias = bias[:, :, (T - T_q):]
+    query_bias.fill_(float("-inf"))
+    query_bias.triu_(diagonal=1)
+    
+    fa_out = flash_attention(q, k, v, bias)
+    ref_out = reference_attention(q, k, v, bias)
     assert torch.allclose(fa_out, ref_out, rtol=1e-3, atol=1e-3), f"mean_diff: {(fa_out - ref_out).abs().mean()}, max_diff: {(fa_out - ref_out).abs().max()}"

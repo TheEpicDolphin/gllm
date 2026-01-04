@@ -9,10 +9,8 @@ def reference_attention(
     k: torch.Tensor,
     # [B, T, num_kv_heads, head_dim]
     v: torch.Tensor,
-    # [B, T_q, T_q]
-    query_bias: torch.Tensor,
-    # [B, T_q, T - T_q]
-    context_bias: torch.Tensor,
+    # [B, T_q, T]
+    bias: torch.Tensor,
 ) -> torch.Tensor:
     assert k.shape == v.shape
     B, T_q, num_q_heads, head_dim = q.shape
@@ -40,10 +38,8 @@ def reference_attention(
     # Compute attention scores: Q @ K^T / sqrt(d_k).
     # [B, num_heads, T_q, T]
     attn_scores = torch.matmul(q, k.transpose(-2, -1)) / head_dim**0.5
-    # Apply attention bias to context padding.
-    attn_scores[:, :, :, :-T_q] += context_bias.unsqueeze(1)
-    # Apply attention bias to query.
-    attn_scores[:, :, :, -T_q:] += query_bias.unsqueeze(1)
+    # Apply attention bias.
+    attn_scores += bias.unsqueeze(1)
     # Compute softmax of scores.
     # [B, num_heads, T_q, T]
     attn_probs = F.softmax(attn_scores, dim=-1)

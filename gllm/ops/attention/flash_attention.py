@@ -6,13 +6,15 @@ import triton.language as tl
 
 @triton.jit
 def flash_attention_kernel(
-    Q_ptr,
-    K_ptr,
-    V_ptr,
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    bias_ptr,
     out_ptr,
     stride_Q_B, stride_Q_T, stride_Q_H, stride_Q_D,
     stride_K_B, stride_K_T, stride_K_H, stride_K_D,
     stride_V_B, stride_V_T, stride_V_H, stride_V_D,
+    stride_bias_B, stride_bias_T_q, stride_bias_T,
     stride_out_B, stride_out_T, stride_out_H, stride_out_D,
     T_q: tl.constexpr, T: tl.constexpr, G: tl.constexpr, D: tl.constexpr,
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
@@ -47,7 +49,7 @@ def flash_attention_kernel(
     scale: tl.constexpr = 1.0 / float(D)**0.5
     # [BLOCK_M, D]
     Q_i = tl.load(
-        Q_ptr
+        q_ptr
         + pid_b * stride_Q_B
         + offs_i[:, None] * stride_Q_T
         + pid_h * stride_Q_H
@@ -73,7 +75,7 @@ def flash_attention_kernel(
         offs_j = j + tl.arange(0, BLOCK_N)
         # [D, BLOCK_N]
         K_j_T = tl.load(
-            K_ptr
+            k_ptr
             + pid_b * stride_K_B
             + offs_j[None, :] * stride_K_T
             + pid_h_kv * stride_K_H
@@ -83,7 +85,7 @@ def flash_attention_kernel(
         )
         # [BLOCK_N, D]
         V_j = tl.load(
-            V_ptr
+            v_ptr
             + pid_b * stride_V_B
             + offs_j[:, None] * stride_V_T
             + pid_h_kv * stride_V_H
@@ -95,6 +97,18 @@ def flash_attention_kernel(
         # Compute the raw attention scores.
         # [BLOCK_M, BLOCK_N]
         S_ij = tl.dot(Q_i, K_j_T) * scale
+        
+        # Load and apply bias to attention scores.
+        # [BLOCK_M, BLOCK_N]
+        bias_ij = tl.load(
+            bias_ptr
+            + pid_b * stride_bias_B
+            + offs_i[:, None] * stride_bias_T_q
+            + offs_j[None, :] * stride_bias_T,
+            mask=(offs_i[:, None] < T_q) & (offs_j[None, :] < T),
+            other=0.0
+        )
+        S_ij += bias_ij
 
         # The current normalizer value is:
         #   l = rowsum(P_i0) + rowsum(P_i1) + ... + rowsum(P_ij-1)
@@ -140,10 +154,8 @@ def flash_attention(
     k: torch.Tensor,
     # [B, T, num_kv_heads, head_dim]
     v: torch.Tensor,
-    # [B, T_q, T_q]
-    query_bias: torch.Tensor,
-    # [B, T_q, T - T_q]
-    context_bias: torch.Tensor,
+    # [B, T_q, T]
+    bias: torch.Tensor,
 ) -> torch.Tensor:
     assert k.shape == v.shape
     B, T_q, num_q_heads, head_dim = q.shape
@@ -163,10 +175,11 @@ def flash_attention(
     
     out = torch.zeros_like(q)
     flash_attention_kernel[grid](
-        q, k, v, out,
+        q, k, v, bias, out,
         q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+        bias.stride(0), bias.stride(1), bias.stride(2),
         out.stride(0), out.stride(1), out.stride(2), out.stride(3),
         T_q, T, num_groups, head_dim,
         BLOCK_M, BLOCK_N,

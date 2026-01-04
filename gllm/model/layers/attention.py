@@ -22,10 +22,9 @@ class AttentionMetadata:
     slot_mapping: torch.Tensor
     # [B, T_q]
     query_slot_mapping: torch.Tensor
-    # [B, T_q, T - T_q]
-    context_bias: torch.Tensor
-    # [B, T_q, T_q]
-    query_bias: torch.Tensor
+    # [B, T_q, T]
+    bias: torch.Tensor
+
 
 class Attention(BaseModule):
     def __init__(
@@ -175,8 +174,7 @@ class Attention(BaseModule):
             q,
             k,
             v,
-            attention_metadata.query_bias,
-            attention_metadata.context_bias
+            attention_metadata.bias,
         )
         
         # [B, T_q, hidden_size]

@@ -232,12 +232,13 @@ class LLM:
 
         bs = len(reqs)
         query_lens = query_lens[:bs]
-        max_query_len = query_lens.max()
         seq_lens = seq_lens[:bs]
+        context_lens = seq_lens - query_lens
+        max_query_len = query_lens.max()
         max_seq_len = seq_lens.max()
+        max_context_len = context_lens.max()
         max_num_blocks = num_blocks[:bs].max()
         block_table = block_table[:bs, :max_num_blocks]
-        context_lens = seq_lens - query_lens
         
         # Create KV cache slot mapping.
         # [B, max_num_blocks, block_size]
@@ -245,39 +246,35 @@ class LLM:
         # [B, max_num_blocks * block_size]
         slot_mapping = slot_mapping.view(bs, -1)
         
-        # Apply padding to slot mapping and context. Padding is needed
-        # to align variable length sequences during attention.
-        max_context_len = context_lens.max()
+        # Initialize attention bias to all zeros.
+        # [B, T_q, T]
+        bias = torch.zeros(
+            (bs, max_query_len, max_context_len + max_query_len),
+            dtype=self.model.dtype,
+            device=self.device,
+        )
+        
+        # Apply padding to slot mapping and attention bias. Padding is
+        # needed to align variable length sequences during attention.
         padded_slot_mapping = torch.zeros(
             (bs, max_context_len + max_query_len),
             dtype=slot_mapping.dtype,
-            device=self.device,
-        )
-        context_bias = torch.zeros(
-            (bs, max_query_len, max_context_len),
-            dtype=self.model.dtype,
             device=self.device,
         )
         for i in range(bs):
             padding = max_context_len - context_lens[i]
             seq_len = seq_lens[i]
             padded_slot_mapping[i, padding:padding + seq_len] = slot_mapping[i, :seq_len]
-            context_bias[i, :, :padding] = float("-inf")
+            bias[i, :, :padding] = float("-inf")
+        
+        # Set causal attention bias for query.
+        # [B, T_q, T_q]
+        query_bias = bias[:, :, max_context_len:]
+        query_bias.fill_(float("-inf"))
+        query_bias.triu_(diagonal=1)
         
         # Create query slot mapping.
         query_slot_mapping = padded_slot_mapping[:, -max_query_len:].contiguous()
-        
-        # Create causal attention bias for query.
-        # [T_q, T_q]
-        query_bias = torch.full(
-            (max_query_len, max_query_len),
-            float("-inf"),
-            dtype=self.model.dtype,
-            device=self.device,
-        )
-        query_bias.triu_(diagonal=1)
-        # [B, T_q, T_q]
-        query_bias = query_bias.expand(bs, -1, -1).contiguous()
         
         # Update query token ids for next decode step.
          # [B, T_q]
@@ -292,8 +289,7 @@ class LLM:
             block_table=block_table,
             slot_mapping=padded_slot_mapping,
             query_slot_mapping=query_slot_mapping,
-            context_bias=context_bias,
-            query_bias=query_bias,
+            bias=bias,
         )
 
         # Update sampling metadata.
