@@ -40,6 +40,9 @@ async def test_flash_attention_correctness(
     H_kv: int,
     D: int,
 ):
+    torch.manual_seed(42)
+    torch.cuda.manual_seed(42)
+
     q_shape = (B, T_q, H_q, D)
     kv_shape = (B, T, H_kv, D)
 
