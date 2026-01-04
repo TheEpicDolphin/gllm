@@ -118,22 +118,22 @@ def flash_attention_kernel(
         m_exp = tl.exp(m)
         # The current normalizer value is:
         #   l = rowsum(P_i0) + rowsum(P_i1) + ... + rowsum(P_ij-1)
-        # Destabilize by removing the previous max score.
+        # Destabilize by removing the previous max scores.
         l *= m_exp
         # The current output value is:
         #   P_i0 x V_0 + P_i1 x V_1 + ... + P_ij-1 x V_j-1
         #   = e^-m * (e^(S_i0) x V_0 + e^(S_i1) x V_1 + ... + e^(S_ij-1) x V_0)
-        # Destabilize by removing the previous max score.
+        # Destabilize by removing the previous max scores.
         out *= m_exp[:, None]
 
         # Update the max score.
         m = tl.maximum(m, tl.max(S_ij, axis=1))
-        # Compute the unnormalized probability. The max score is
+        # Compute the unnormalized probabilities. The max score is
         # subtracted for stability.
         P_ij = tl.exp(S_ij - m[:, None])
 
         inv_m_exp = tl.exp(-m)
-        # Add the latest unnormalized probability.
+        # Add the latest unnormalized probabilities.
         # l = e^(-m') * e^(m) * l + rowwsum(P_ij)
         l *= inv_m_exp
         l += tl.sum(P_ij, axis=1)
