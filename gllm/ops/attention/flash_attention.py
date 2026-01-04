@@ -115,32 +115,35 @@ def flash_attention_kernel(
         )
         S_ij += bias_ij
 
+        m_exp = tl.exp(m)
         # The current normalizer value is:
         #   l = rowsum(P_i0) + rowsum(P_i1) + ... + rowsum(P_ij-1)
         # Destabilize by removing the previous max score.
-        l *= tl.exp(m)
+        l *= m_exp
         # The current output value is:
-        #   (P_i0 x V_0 + P_i1 x V_1 + ... + P_ij-1 x V_j-1) / l.
-        # Denormalize and destabilize.
-        out *= l[:, None]
+        #   P_i0 x V_0 + P_i1 x V_1 + ... + P_ij-1 x V_j-1
+        #   = e^-m * (e^(S_i0) x V_0 + e^(S_i1) x V_1 + ... + e^(S_ij-1) x V_0)
+        # Destabilize by removing the previous max score.
+        out *= m_exp[:, None]
 
         # Update the max score.
         m = tl.maximum(m, tl.max(S_ij, axis=1))
-        # Compute the unnormalized, probability. The max score is
+        # Compute the unnormalized probability. The max score is
         # subtracted for stability.
         P_ij = tl.exp(S_ij - m[:, None])
 
         inv_m_exp = tl.exp(-m)
         # Add the latest unnormalized probability.
-        # l = e^(-m') * e^m * l + rowwsum(P_ij)
+        # l = e^(-m') * e^(m) * l + rowwsum(P_ij)
         l *= inv_m_exp
         l += tl.sum(P_ij, axis=1)
         # Add the latest block product.
-        # out = (e^(-m') * e^m * l * out + P_ij x V_j) / l
+        # out = e^(-m') * e^(m) * out + P_ij x V_j
         out *= inv_m_exp[:, None]
         out += tl.dot(P_ij, V_j)
-        out /= l[:, None]
 
+    # Normalize the output.
+    out /= l[:, None]
     tl.store(
         out_ptr
         + pid_b * stride_out_B
