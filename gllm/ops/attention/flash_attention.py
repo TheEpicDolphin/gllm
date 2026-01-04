@@ -47,6 +47,8 @@ def flash_attention_kernel(
     offs_i = pid_i * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_d = tl.arange(0, D)
     scale: tl.constexpr = 1.0 / float(D)**0.5
+    
+    mask_i = offs_i[:, None] < T_q
     # [BLOCK_M, D]
     Q_i = tl.load(
         q_ptr
@@ -54,7 +56,7 @@ def flash_attention_kernel(
         + offs_i[:, None] * stride_Q_T
         + pid_h * stride_Q_H
         + offs_d[None, :] * stride_Q_D,
-        mask=(offs_i[:, None] < T_q),
+        mask=mask_i,
         other=0.0
     )
     # [BLOCK_M, D]
@@ -64,7 +66,7 @@ def flash_attention_kernel(
         + offs_i[:, None] * stride_out_T
         + pid_h * stride_out_H
         + offs_d[None, :] * stride_out_D,
-        mask=(offs_i[:, None] < T_q),
+        mask=mask_i,
         other=0.0
     )
     # [BLOCK_M]
@@ -73,6 +75,8 @@ def flash_attention_kernel(
     m = tl.full((BLOCK_M,), -float("inf"), Q_i.dtype)
     for j in range(0, T, BLOCK_N):
         offs_j = j + tl.arange(0, BLOCK_N)
+        mask_j = offs_j[None, :] < T
+        
         # [D, BLOCK_N]
         K_j_T = tl.load(
             k_ptr
@@ -80,7 +84,7 @@ def flash_attention_kernel(
             + offs_j[None, :] * stride_K_T
             + pid_h_kv * stride_K_H
             + offs_d[:, None] * stride_K_D,
-            mask=(offs_j[None, :] < T),
+            mask=mask_j,
             other=0.0
         )
         # [BLOCK_N, D]
@@ -105,8 +109,9 @@ def flash_attention_kernel(
             + pid_b * stride_bias_B
             + offs_i[:, None] * stride_bias_T_q
             + offs_j[None, :] * stride_bias_T,
-            mask=(offs_i[:, None] < T_q) & (offs_j[None, :] < T),
-            other=0.0
+            # Invalidate scores outside of the current block.
+            mask=mask_i & mask_j,
+            other=-float("inf")
         )
         S_ij += bias_ij
 

@@ -11,7 +11,13 @@ from gllm.ops.attention.reference_attention import reference_attention
 @pytest.mark.asyncio
 @pytest.mark.parametrize("B, T_q, T, H_q, H_kv, D", [
     (
+        1, 8, 8, 1, 1, 128
+    ),
+    (
         1, 16, 16, 1, 1, 128
+    ),
+    (
+        1, 40, 40, 1, 1, 128
     ),
     (
         1, 256, 256, 1, 1, 128
@@ -56,4 +62,4 @@ async def test_flash_attention_correctness(
     
     fa_out = flash_attention(q, k, v, bias)
     ref_out = reference_attention(q, k, v, bias)
-    assert torch.allclose(fa_out, ref_out, rtol=1e-3, atol=1e-3), f"mean_diff: {(fa_out - ref_out).abs().mean()}, max_diff: {(fa_out - ref_out).abs().max()}"
+    assert torch.allclose(fa_out, ref_out, rtol=1e-3, atol=1e-3), f"mean diff: {(fa_out - ref_out).abs().mean()}, max diff: {(fa_out - ref_out).abs().max()}"
