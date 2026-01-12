@@ -72,8 +72,8 @@ class Attention(BaseModule):
             self.linear_o,
         ]
     
-    
-    def apply_rope(
+
+    def rope_forward(
         self,
         # [B, T_q, num_q_heads, head_dim]
         q: torch.Tensor,
@@ -118,11 +118,27 @@ class Attention(BaseModule):
         ).view(B, T_q, num_kv_heads, -1)
         return q_r, k_r
         
+        
+    def rope_backward(
+        self,
+        # [B, T_q, num_q_heads, head_dim]
+        q: torch.Tensor,
+        # [B, T_q, num_kv_heads, head_dim]
+        k: torch.Tensor,
+        # [B, T_q, head_dim // 2]
+        cos_pos: torch.Tensor,
+        # [B, T_q, head_dim // 2]
+        sin_pos: torch.Tensor,
+    ):
+        # TODO
+        return None
+        
     
-    def forward(
+    def _forward_impl(
         self,
         # [B, T_q, hidden_size]
         x: torch.Tensor,
+        weights: torch.Tensor | None,
         # [B, T_q, head_dim // 2]
         cos_pos: torch.Tensor,
         # [B, T_q, head_dim // 2]
@@ -148,7 +164,7 @@ class Attention(BaseModule):
         v = v.view(B, T_q, self.num_kv_heads, self.head_dim)
         
         # Apply RoPE rotation matrix to q and k.
-        q, k = self.apply_rope(q, k, cos_pos, sin_pos)
+        q, k = self.rope_forward(q, k, cos_pos, sin_pos)
         
         # Cache query token K/Vs.
         # TODO: Remove dummy query slots to reduce copying.
@@ -177,6 +193,65 @@ class Attention(BaseModule):
             attention_metadata.bias,
         )
         
+        # Cache activations for training backward pass.
+        # TODO: Get and cache p (softmax probabilities) from attention.
+        self._cache_activations(q, k, v)
+        
         # [B, T_q, hidden_size]
         attn_out = attn_out.view(B, T_q, -1)
         return self.linear_o.forward(attn_out)
+    
+    
+    def _backward_impl(
+        self,
+        dL_dy: torch.Tensor,
+        weights: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q, k, v, p = self._cache
+        
+        # Backpropagation logic:
+        # dL/dx = dL/dy * dy/dO * [dO/dP * [dP/dQ * dQ/dx + dP/dK * dK/dx] + dO/dV * dV/dx]
+    
+        # y = W_o @ O
+        dL_do = self.linear_o.backward(dL_dy)
+                
+        # O = P @ V
+        dL_dp = dL_do @ v.transpose(-1, -2)
+        dL_dv = p.transpose(-1, -2) @ dL_do
+        
+        # P = softmax(S)
+        #
+        # Theory:
+        # dp_i/ds_j = (i == j) * softmax(s) - e^s_i * e^s_j / sum(e^s)^2
+        # dp/ds = [ dy_1/dx_1, dy_2/dx_1, ..., dy_N/dx_1 ]
+        #         [ dy_1/dx_2, dy_2/dx_2, ..., dy_N/dx_2 ]
+        #         [                . . .                 ]
+        #         [ dy_1/dx_N, dy_2/dx_N, ..., dy_N/dx_N ]
+        # dp/ds @ dL/dp = [ dL/dp_1 * dp_1/ds_1 + dL/dp_2 * dp_2/ds_1 + ... + dL/dp_N * dp_N/ds_1 ]
+        #                 [ dL/dp_1 * dp_1/ds_2 + dL/dp_2 * dp_2/ds_2 + ... + dL/dp_N * dp_N/ds_2 ]
+        #                 [                                 . . .                                 ]
+        #                 [ dL/dp_1 * dp_1/ds_N + dL/dp_2 * dp_2/ds_N + ... + dL/dp_N * dp_N/ds_N ]
+        #
+        # Below code produces the same result as above, but without materializing
+        # the NxN dp/ds jacobian matrix.
+        dot = torch.sum(dL_dp * p, dim=-1, keepdim=True)
+        dL_ds = p * (dL_dp - dot)
+        
+        # S = Q @ K^T / sqrt(d)
+        scale = 1.0 / d**0.5
+        ds_dqr = k * scale
+        dL_dqr = dL_ds @ ds_dqr
+        ds_dkr = q * scale
+        dL_dkr = dL_ds.transpose(-1, -2) @ ds_dkr
+        
+        # RoPE
+        dL_dq, dL_dk = self.rope_backward(dL_dqr, dL_dkr, cos_pos, sin_pos)
+        
+        # Q, K, and V linear projections.
+        dL_dxq = self.linear_q.backward(dL_dq)
+        dL_dxk = self.linear_k.backward(dL_dk)
+        dL_dxv = self.linear_v.backward(dL_dv)
+        dL_dx = dL_dxq + dL_dxk + dL_dxv
+        return dL_dx, None
+        
+        

@@ -13,8 +13,10 @@ from gllm.config.generator_params import GeneratorParams
 from gllm.config.model_config import ModelConfig
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.layers.attention import AttentionMetadata
+from gllm.model.layers.base_module import BaseModule
+from gllm.model.layers.linear import Linear
 from gllm.model.layers.norm import RMSNorm
-from gllm.model.transformer import Transformer
+from gllm.model.layers.transformer_layer import TransformerLayer
 
 CPU_DEVICE = "cpu"
 
@@ -24,7 +26,7 @@ class HuggingFaceModel(StrEnum):
     LLAMA_3_2_1B_INSTUCT = "meta-llama/Llama-3.2-1B-Instruct"
     
 
-class Model:
+class Model(BaseModule):
     def __init__(
         self,
         hf_model: HuggingFaceModel,
@@ -32,6 +34,8 @@ class Model:
         device: str,
         local_cache_dir: str | None = None,
     ):
+        super().__init__(None)
+        
         if local_cache_dir is None:
             # Use default cache directory.
             local_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "gllm")
@@ -93,9 +97,9 @@ class Model:
         )
 
         # Initialize transformer layers.
-        self.layers: list[Transformer] = []
+        self.layers: list[TransformerLayer] = []
         for layer_idx in range(self.model_config.num_layers):
-            self.layers.append(Transformer(
+            self.layers.append(TransformerLayer(
                 layer_idx,
                 model_config=self.model_config,
                 safetensors=safetensors,
@@ -112,7 +116,8 @@ class Model:
         # ids to get the embedding vectors. It is also used as an LM
         # heead by multiplying with the hidden states to obtain the
         # logits.
-        self.embedding = safetensors["model.embed_tokens.weight"].to(self.dtype)
+        self.embedding_weights = safetensors["model.embed_tokens.weight"].to(self.dtype)
+        self.unembed = Linear(self.embedding_weights)
         
         # Construct RoPE sin/cos caches for positions up to T_max.
         # [T_max]
@@ -133,6 +138,12 @@ class Model:
             # Allocate staging buffers using the first transformer layer.
             # All layers are expected to have the same weight shapes.
             self.transformer_layer_staging_buffers = self.layers[0].allocate_staging_buffers()
+        
+        self.child_modules = self.layers + [
+            self.final_norm,
+            self.unembed,
+        ]
+        
         
     @property
     def cpu_offloading(self) -> bool:
@@ -172,20 +183,21 @@ class Model:
             return []
 
 
-    def get_token_embeddings(
+    def embedding_lookup(
         self,
         token_ids: torch.Tensor | list[int]
     ) -> torch.Tensor:
         # Load embedding weights to device.
-        embedding_gpu = self.embedding.to(self.device)
+        embedding_gpu = self.embedding_weights.to(self.device)
         embeddings = embedding_gpu[token_ids]
         return embeddings
-    
+        
 
-    def forward(
+    def _forward_impl(
         self,
-        # [B, T, hidden_size]
-        hidden_states: torch.Tensor,
+        # [B, T_q, hidden_size]
+        x: torch.Tensor,
+        weights: torch.Tensor | None,
         # [B, T_q]
         positions: torch.Tensor,
         attention_metadata: AttentionMetadata
@@ -195,10 +207,8 @@ class Model:
         cos_pos = self.cos_pos_cache[positions]
         sin_pos = self.sin_pos_cache[positions]
         
-        # Preload first layer's weights to device.
-        device = hidden_states.device
-        
-        residual = None
+        # Core transformer layer loop.
+        h = x
         for idx, layer in enumerate(self.layers):
             if self.cpu_offloading:
                 # Wait for weights transfer to finish.
@@ -209,12 +219,11 @@ class Model:
                         record_function(f"model.layer.{idx + 1}.preload")
                     ):
                         # Preload the next layer's weights to device.
-                        self.layers[idx + 1].preload_weights(device, self.transformer_layer_staging_buffers)
+                        self.layers[idx + 1].preload_weights(x.device, self.transformer_layer_staging_buffers)
             
             with record_function(f"model.layer.{idx}.forward"):
-                hidden_states, residual = layer.forward(
-                    hidden_states,
-                    residual,
+                h = layer.forward(
+                    h,
                     cos_pos,
                     sin_pos,
                     self.paged_kv_cache.get_layer_kv_cache(idx),
@@ -224,16 +233,33 @@ class Model:
             if self.cpu_offloading:
                 # Unload the current layer's weights from the device.
                 layer.unload_weights()
-            
+        
+        # Final layernorm.
         with record_function("model.final_norm"):
-            return self.final_norm.forward(hidden_states + residual)
-
-
-    def compute_logits(
+            h_normed = self.final_norm.forward(h)
+        
+        # Unembed. Computes output logits.
+        with record_function("model.compute_logits"):
+            # TODO: Only compute logits for last token hidden state during prefill.
+            logits = self.unembed.forward(h_normed)
+        return logits
+        
+            
+    def _backward_impl(
         self,
-        # [B, T, hidden_size]
-        x: torch.Tensor
-    ) -> torch.Tensor:
-        # Load embedding weights to device.
-        embedding_gpu = self.embedding.to(self.device)
-        return F.linear(x, embedding_gpu)
+        dL_dy: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # l = W_e @ h_n
+        dL_dh_n = self.unembed.backward(dL_dy)
+        
+        # h_normed = RMSNorm(h_n)
+        dL_dh = self.final_norm.backward(dL_dh_n)
+        
+        # Core transformer layer loop.
+        for idx, layer in enumerate(reversed(self.layers)):
+            with record_function(f"model.layer.{idx}.backward"):
+                dL_dh = layer.backward(dL_dh)
+                
+        dL_dx = dL_dh
+        # TODO: Compute grad and apply to embedding matrix.
+        return dL_dx, None

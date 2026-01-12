@@ -318,21 +318,16 @@ class LLM:
         attn_metadata = input_batch.attention_metadata
         
         # [B, T_q, hidden_size]
-        token_embeddings = self.model.get_token_embeddings(input_token_ids)
+        token_embeddings = self.model.embedding_lookup(input_token_ids)
         assert not torch.isnan(token_embeddings).any()
         
         with record_function("model.forward"):
             # [B, T_q, hidden_size]
-            output_hidden_states = self.model.forward(
+            logits = self.model.forward(
                 token_embeddings,
                 positions,
                 attn_metadata
             )
-        assert not torch.isnan(output_hidden_states).any()
-        
-        with record_function("model.compute_logits"):
-            # [B, T_q, vocab_size]
-            logits = self.model.compute_logits(output_hidden_states)
         assert not torch.isnan(logits).any()
         
         query_lens = attn_metadata.query_lens

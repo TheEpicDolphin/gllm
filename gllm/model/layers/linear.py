@@ -11,10 +11,22 @@ class Linear(BaseModule):
         super().__init__(weights)
 
 
-    def forward(
+    def _forward_impl(
         self,
-        x: torch.Tensor
+        x: torch.Tensor,
+        weights: torch.Tensor | None,
     ) -> torch.Tensor:
-        weights = self.get_weights(x.device)
         # out = W @ x
         return F.linear(x, weights)
+        
+        
+    def _backward_impl(
+        self,
+        dL_dy: torch.Tensor,
+        weights: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # dL/dx = W^T @ dL/dy
+        dL_dx = weights.transpose(-1, -2) @ dL_dy
+        
+        # TODO: Implement dL_dW for LoRa.
+        return dL_dx, None
