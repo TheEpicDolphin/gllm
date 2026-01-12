@@ -27,6 +27,4 @@ class Linear(BaseModule):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # dL/dx = W^T @ dL/dy
         dL_dx = weights.transpose(-1, -2) @ dL_dy
-        
-        # TODO: Implement dL_dW for LoRa.
         return dL_dx, None

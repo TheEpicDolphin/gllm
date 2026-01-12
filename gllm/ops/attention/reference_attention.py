@@ -17,7 +17,8 @@ def reference_attention(
     v: torch.Tensor,
     # [B, T_q, T]
     bias: torch.Tensor,
-) -> torch.Tensor:
+    return_probs: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     assert k.shape == v.shape
     B, T_q, num_q_heads, head_dim = q.shape
     _, T, num_kv_heads, _ = k.shape
@@ -54,4 +55,4 @@ def reference_attention(
     attn_out = torch.matmul(P, v)
     # [B, T_q, num_heads, head_dim]
     attn_out = attn_out.transpose(1, 2).contiguous()
-    return attn_out
+    return (attn_out, P) if return_probs else attn_out

@@ -179,16 +179,16 @@ class Attention(BaseModule):
         v = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
         
         # Compute attention.
-        attn_out = reference_attention(
+        attn_out, p = reference_attention(
             q,
             k,
             v,
             attention_metadata.bias,
+            return_probs=True,
         )
         
         # Cache activations for training backward pass.
-        # TODO: Get and cache p (softmax probabilities) from attention.
-        self._cache_activations(q, k, v)
+        self._cache_activations(q, k, v, p, cos_pos, sin_pos)
         
         # [B, T_q, hidden_size]
         attn_out = attn_out.view(B, T_q, -1)
@@ -200,7 +200,7 @@ class Attention(BaseModule):
         dL_dy: torch.Tensor,
         weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        q, k, v, p = self._cache
+        q, k, v, p, cos_pos, sin_pos = self._cache
         
         # Backpropagation logic:
         # dL/dx = dL/dy * dy/dO * [dO/dP * [dP/dQ * dQ/dx + dP/dK * dK/dx] + dO/dV * dV/dx]
