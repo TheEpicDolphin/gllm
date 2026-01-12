@@ -72,66 +72,58 @@ class Attention(BaseModule):
             self.linear_o,
         ]
     
-
+    
     def rope_forward(
         self,
-        # [B, T_q, num_q_heads, head_dim]
-        q: torch.Tensor,
-        # [B, T_q, num_kv_heads, head_dim]
-        k: torch.Tensor,
+        # [B, T_q, num_heads, head_dim]
+        x: torch.Tensor,
         # [B, T_q, head_dim // 2]
         cos_pos: torch.Tensor,
         # [B, T_q, head_dim // 2]
         sin_pos: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:       
-        B, T_q, num_q_heads, head_dim = q.shape
-        _, _, num_kv_heads, _ = k.shape
+    ) -> torch.Tensor:
+        B, T_q, num_heads, _ = x.shape
         
-        # [B, T_q, num_q_heads, 2, head_dim // 2]
-        q = q.view(B, T_q, num_q_heads, 2, -1)
-        # [B, T_q, num_kv_heads, 2, head_dim // 2]
-        k = k.view(B, T_q, num_kv_heads, 2, -1)
+        # Theory:
+        # y = R @ x
+        # [  x'_i  ] = [ cos(theta), -sin(theta) ] @ [  x_i  ]
+        # [ x'_i+1 ]   [ sin(theta),  cos(theta) ]   [ x_i+1 ]
         
-        # [B, T_q, num_q_heads, head_dim // 2]
-        q_even, q_odd = q.unbind(dim=3)
-        # [B, T_q, num_kv_heads, head_dim // 2]
-        k_even, k_odd = k.unbind(dim=3)
+        # [B, T_q, num_heads, 2, head_dim // 2]
+        x = x.view(B, T_q, num_heads, 2, -1)
+        
+        # [B, T_q, num_heads, head_dim // 2]
+        x_even, x_odd = x.unbind(dim=3)
         
         # [B, T_q, 1, head_dim // 2]
         cos_pos = cos_pos.unsqueeze(2)
         sin_pos = sin_pos.unsqueeze(2)
         
         # Apply rotations.
-        q_r = torch.stack(
+        x_r = torch.stack(
             [
-                q_even * cos_pos - q_odd * sin_pos,
-                q_even * sin_pos + q_odd * cos_pos,
+                x_even * cos_pos - x_odd * sin_pos,
+                x_even * sin_pos + x_odd * cos_pos,
             ],
             dim=3,
-        ).view(B, T_q, num_q_heads, -1)
-        k_r = torch.stack(
-            [
-                k_even * cos_pos - k_odd * sin_pos,
-                k_even * sin_pos + k_odd * cos_pos,
-            ],
-            dim=3,
-        ).view(B, T_q, num_kv_heads, -1)
-        return q_r, k_r
+        ).view(B, T_q, num_heads, -1)
+        return x_r
         
         
     def rope_backward(
         self,
-        # [B, T_q, num_q_heads, head_dim]
-        q: torch.Tensor,
-        # [B, T_q, num_kv_heads, head_dim]
-        k: torch.Tensor,
+        # [B, T_q, num_heads, head_dim]
+        dL_dy: torch.Tensor,
         # [B, T_q, head_dim // 2]
         cos_pos: torch.Tensor,
         # [B, T_q, head_dim // 2]
         sin_pos: torch.Tensor,
     ):
-        # TODO
-        return None
+        # y = R @ x
+        # dL_dx = R^T @ dL_dy
+        # R^T is just R, but with sin(theta) negated.
+        dL_dx = self.rope_forward(dL_dy, cos_pos, -sin_pos) @ dL_dy
+        return dL_dx
         
     
     def _forward_impl(
@@ -164,7 +156,8 @@ class Attention(BaseModule):
         v = v.view(B, T_q, self.num_kv_heads, self.head_dim)
         
         # Apply RoPE rotation matrix to q and k.
-        q, k = self.rope_forward(q, k, cos_pos, sin_pos)
+        q = self.rope_forward(q, cos_pos, sin_pos)
+        k = self.rope_forward(k, cos_pos, sin_pos)
         
         # Cache query token K/Vs.
         # TODO: Remove dummy query slots to reduce copying.
@@ -245,7 +238,8 @@ class Attention(BaseModule):
         dL_dkr = dL_ds.transpose(-1, -2) @ ds_dkr
         
         # RoPE
-        dL_dq, dL_dk = self.rope_backward(dL_dqr, dL_dkr, cos_pos, sin_pos)
+        dL_dq = self.rope_backward(dL_dqr, cos_pos, sin_pos)
+        dL_dk = self.rope_backward(dL_dkr, cos_pos, sin_pos)
         
         # Q, K, and V linear projections.
         dL_dxq = self.linear_q.backward(dL_dq)
