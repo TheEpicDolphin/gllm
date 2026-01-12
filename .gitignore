@@ -34,4 +34,6 @@ ruff_cache/
 pylint-report.txt
 pylint.log
 
+# --- Data ---
 traces/
+datasets/
