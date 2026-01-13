@@ -17,7 +17,7 @@ class DataLoader:
     
     def __iter__(self):
         num_samples = 0
-        batch: List[str] = []
+        batch = []
         for sample in self.dataset:
             batch.append(sample)
             num_samples += 1

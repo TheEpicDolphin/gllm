@@ -17,7 +17,8 @@ class Trainer:
         device: str,
     ):
         for epoch in range(num_epochs):
-            for step, batched_prompts, batched_completions in enumerate(dataloader):
+            for step, batched_samples in enumerate(dataloader):
+                batched_prompts, batched_completions = zip(*batched_samples)
                 batched_prompt_ids = model.tokenize(batched_prompts)
                 batched_completion_ids = model.tokenize(batched_completions)
                 
@@ -69,7 +70,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, type=str)
     parser.add_argument("--dataset-path", required=True, type=str)
-    parser.add_argument("--row-key", default="text", required=False, type=str)
+    parser.add_argument("--prompt-key", default="prompt", required=False, type=str)
+    parser.add_argument("--completion-key", default="completion", required=False, type=str)
     parser.add_argument("--batch-size", default=1, required=False, type=int)
     parser.add_argument("--max-num-samples", default=-1, required=False, type=int)
     parser.add_argument("--optimizer", required=True, type=str)
@@ -94,7 +96,8 @@ def main():
     if ext == '.jsonl':
         dataset = JSONLDataset(
             dataset_path,
-            args.row_key
+            args.prompt_key,
+            args.completion_key,
         )
     else:
         raise NotImplementedError(f"Dataset extension: {ext} is not currently supported.")

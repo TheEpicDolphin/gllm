@@ -6,10 +6,12 @@ class JSONLDataset:
     def __init__(
         self,
         path: str,
-        key: str,
+        prompt_key: str,
+        completion_key: str,
     ):
         self.path = path
-        self.key = key
+        self.prompt_key = prompt_key
+        self.completion_key = completion_key
 
 
     def __iter__(self) -> Iterator[str]:
@@ -18,4 +20,4 @@ class JSONLDataset:
                 if not line.strip():
                     continue
                 obj = json.loads(line)
-                yield obj[self.key]
+                yield (obj[self.prompt_key], obj[self.completion_key])
