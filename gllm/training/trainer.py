@@ -17,22 +17,41 @@ class Trainer:
         device: str,
     ):
         for epoch in range(num_epochs):
-            for step, batched_text_samples in enumerate(dataloader):
-                batched_token_ids = model.tokenize(batched_text_samples)
+            for step, batched_prompts, batched_completions in enumerate(dataloader):
+                batched_prompt_ids = model.tokenize(batched_prompts)
+                batched_completion_ids = model.tokenize(batched_completions)
                 
-                # Pad requests with padding token ids.
-                max_len = max(len(row) for row in batched_token_ids)
-                for row in batched_token_ids:
-                    num_padding = max_len - len(row)
-                    row.extend([model.pad_token_id] * num_padding)
+                # Join prompt and completion token ids together.
+                batched_token_ids = []
+                completion_mask = []
+                max_len = max((len(prompt) + len(completion)) for prompt, completion in zip(batched_prompt_ids, batched_completion_ids))
+                for prompt_ids, completion_ids in zip(batched_prompt_ids, batched_completion_ids):
+                    # Pad sequences so that they all have the same length.
+                    prompt_len = len(prompt_ids)
+                    completion_len = len(completion_ids)
+                    seq_len = prompt_len + completion_len
+                    pad_len = max_len - seq_len
+                    pad_token_ids = [model.pad_token_id] * pad_len
+                    batched_token_ids.append(prompt_ids + completion_ids + pad_token_ids)
+                    completion_mask.append([False] * prompt_len + [True] * completion_len + [False] * pad_len)
+                batched_token_ids_tensor = torch.tensor(batched_token_ids, device=device)
+                completion_mask_tensor = torch.tensor(completion_mask, device=device)
                 
                 # Forward pass.
-                inputs = batched_token_ids[:, :-1]
-                logits = model.forward(inputs)
+                # [B, T]
+                input_ids = batched_token_ids_tensor[:, :-1]
+                # [B, T]
+                logits = model.forward(input_ids)
                 
                 # Compute loss.
-                target_token_ids = batched_token_ids[:, 1:]
-                loss = loss_fn.forward(logits, target_token_ids)
+                # [B, T]
+                target_ids = batched_token_ids_tensor[:, 1:]
+                completion_mask = completion_mask_tensor[:, 1:]
+                loss = loss_fn.forward(
+                    logits,
+                    target_ids,
+                    completion_mask,
+                )
                 
                 # Backward pass.
                 dL_dy = loss_fn.backward()

@@ -6,6 +6,7 @@ class CrossEntropyLoss:
     def __init__(self):
         self.logits = None
         self.target_ids = None
+        self.completion_mask = None
 
 
     def forward(
@@ -14,9 +15,12 @@ class CrossEntropyLoss:
         logits,
         # [B, T]
         target_ids,
+        # [B, T]
+        completion_mask,
     ) -> float:
         self.logits = logits
         self.target_ids = target_ids
+        self.completion_mask = completion_mask
 
         B, T, vocab_size = logits.shape
         # [B * T, vocab_size]
@@ -27,8 +31,12 @@ class CrossEntropyLoss:
         # L = -(1/N) * sum(y_i * log(p_i))
         # One-hot y is zero for i != target.
         log_probs = F.log_softmax(logits_flat, dim=-1)
-        loss = torch.mean(-log_probs[range(B*T), target_ids_flat])
-        return loss
+        loss = -log_probs[range(B*T), target_ids_flat]
+        
+        # Ignore prompt tokens during loss calculation.
+        completion_loss = loss[completion_mask.view(-1)]
+        
+        return torch.mean(completion_loss)
         
 
     def backward(self) -> torch.Tensor:
@@ -42,5 +50,12 @@ class CrossEntropyLoss:
         # dL/dz_j = (1/N) * (p_j - y_j)
         # One-hot y is 1 for j == target, and zero otherwise.
         target_one_hot = F.one_hot(self.target_ids, num_classes=vocab_size).float()
-        dL_dy = (1 / (B * T)) * (probs - target_one_hot)
+        dL_dy = probs - target_one_hot
+        
+        # Mask out loss for prompt tokens.
+        dL_dy[~self.completion_mask] = 0
+        
+        # Normalize by number of completion tokens.
+        dL_dy /= self.completion_mask.sum()
+        
         return dL_dy

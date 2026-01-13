@@ -19,4 +19,4 @@ class SGD:
     def step(self):
         for p in self.params:
             if p.grad is not None:
-                p.data -= self.lr * p.grad
+                p.weights -= self.lr * p.grad
