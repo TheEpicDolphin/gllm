@@ -16,6 +16,9 @@ class Trainer:
         num_epochs: int,
         device: str,
     ):
+        # Set model to "training".
+        model.set_training_mode(True)
+        
         for epoch in range(num_epochs):
             for step, batched_samples in enumerate(dataloader):
                 batched_prompts, batched_completions = zip(*batched_samples)
@@ -64,7 +67,9 @@ class Trainer:
                 
                 if step % 100 == 0:
                     print(f"epoch {epoch}, step {step}, loss={loss.item()}")
-                    
+        
+        # Disable training.
+        model.set_training_mode(False)
 
 def main():
     parser = argparse.ArgumentParser()

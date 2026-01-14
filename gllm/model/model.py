@@ -14,6 +14,7 @@ from gllm.config.model_config import ModelConfig
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.layers.base_module import BaseModule
+from gllm.model.layers.embedding import Embedding
 from gllm.model.layers.linear import Linear
 from gllm.model.layers.norm import RMSNorm
 from gllm.model.layers.transformer_layer import TransformerLayer
@@ -117,6 +118,7 @@ class Model(BaseModule):
         # heead by multiplying with the hidden states to obtain the
         # logits.
         self.embedding_weights = safetensors["model.embed_tokens.weight"].to(self.dtype)
+        self.embed = Embedding(self.embedding_weights)
         self.unembed = Linear(self.embedding_weights)
         
         # Construct RoPE sin/cos caches for positions up to T_max.
@@ -139,7 +141,9 @@ class Model(BaseModule):
             # All layers are expected to have the same weight shapes.
             self.transformer_layer_staging_buffers = self.layers[0].allocate_staging_buffers()
         
-        self.child_modules = self.layers + [
+        self.child_modules = [
+            self.embed,
+            *self.layers,
             self.final_norm,
             self.unembed,
         ]
@@ -181,34 +185,26 @@ class Model(BaseModule):
             return [value]
         else:
             return []
-
-
-    def embedding_lookup(
-        self,
-        token_ids: torch.Tensor | list[int]
-    ) -> torch.Tensor:
-        # Load embedding weights to device.
-        embedding_gpu = self.embedding_weights.to(self.device)
-        embeddings = embedding_gpu[token_ids]
-        return embeddings
         
 
     def _forward_impl(
         self,
-        # [B, T_q, hidden_size]
+        # [B, T_q]
         x: torch.Tensor,
         weights: torch.Tensor | None,
         # [B, T_q]
         positions: torch.Tensor,
         attention_metadata: AttentionMetadata
-    ) -> torch.Tensor:
+    ) -> torch.Tensor:    
         # Get RoPE rotation matrix for each position.
         # [B, T_q, head_dim // 2, 2, 2]
         cos_pos = self.cos_pos_cache[positions]
         sin_pos = self.sin_pos_cache[positions]
         
+        # [B, T_q, hidden_size]
+        h = self.embed.forward(x)
+        
         # Core transformer layer loop.
-        h = x
         for idx, layer in enumerate(self.layers):
             if self.cpu_offloading:
                 # Wait for weights transfer to finish.
@@ -260,6 +256,6 @@ class Model(BaseModule):
             with record_function(f"model.layer.{idx}.backward"):
                 dL_dh = layer.backward(dL_dh)
                 
-        dL_dx = dL_dh
-        # TODO: Compute grad and apply to embedding matrix.
+        # h = W_e[x]
+        dL_dx = self.embed.backward(dL_dh)
         return dL_dx, None

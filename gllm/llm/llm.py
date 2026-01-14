@@ -317,14 +317,10 @@ class LLM:
         positions = input_batch.positions
         attn_metadata = input_batch.attention_metadata
         
-        # [B, T_q, hidden_size]
-        token_embeddings = self.model.embedding_lookup(input_token_ids)
-        assert not torch.isnan(token_embeddings).any()
-        
         with record_function("model.forward"):
             # [B, T_q, hidden_size]
             logits = self.model.forward(
-                token_embeddings,
+                input_token_ids,
                 positions,
                 attn_metadata
             )

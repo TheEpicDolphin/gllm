@@ -188,7 +188,7 @@ class Attention(BaseModule):
         )
         
         # Cache activations for training backward pass.
-        self._cache_activations(q, k, v, p, cos_pos, sin_pos)
+        self.cache_for_backward(q, k, v, p, cos_pos, sin_pos)
         
         # [B, T_q, hidden_size]
         attn_out = attn_out.view(B, T_q, -1)
@@ -216,10 +216,10 @@ class Attention(BaseModule):
         #
         # Theory:
         # dp_i/ds_j = (i == j) * softmax(s) - e^s_i * e^s_j / sum(e^s)^2
-        # dp/ds = [ dy_1/dx_1, dy_2/dx_1, ..., dy_N/dx_1 ]
-        #         [ dy_1/dx_2, dy_2/dx_2, ..., dy_N/dx_2 ]
-        #         [                . . .                 ]
-        #         [ dy_1/dx_N, dy_2/dx_N, ..., dy_N/dx_N ]
+        # dp/ds = [ dy_1/dx_1   dy_2/dx_1   ... dy_N/dx_1 ]
+        #         [ dy_1/dx_2   dy_2/dx_2   ... dy_N/dx_2 ]
+        #         [                 . . .                 ]
+        #         [ dy_1/dx_N   dy_2/dx_N   ... dy_N/dx_N ]
         # dp/ds @ dL/dp = [ dL/dp_1 * dp_1/ds_1 + dL/dp_2 * dp_2/ds_1 + ... + dL/dp_N * dp_N/ds_1 ]
         #                 [ dL/dp_1 * dp_1/ds_2 + dL/dp_2 * dp_2/ds_2 + ... + dL/dp_N * dp_N/ds_2 ]
         #                 [                                 . . .                                 ]

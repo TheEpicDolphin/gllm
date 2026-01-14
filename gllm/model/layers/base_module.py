@@ -75,7 +75,7 @@ class BaseModule:
             module.unload_weights()
             
     
-    def _cache_activations(self, *args, **kwargs):
+    def cache_for_backward(self, *args, **kwargs):
         if self.training:
             self._cache = (args, kwargs)
         

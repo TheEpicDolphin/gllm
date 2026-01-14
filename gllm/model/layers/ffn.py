@@ -73,7 +73,7 @@ class FFN(BaseModule):
         weights: torch.Tensor | None,
     ) -> torch.Tensor:
         # Cache activations for training backward pass.
-        self._cache_activations(x)
+        self.cache_for_backward(x)
         
         _, u, a = self.gated_activation(x)
         h = a * u
