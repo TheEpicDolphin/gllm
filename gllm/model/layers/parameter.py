@@ -6,3 +6,4 @@ import torch
 class Parameter:
     weights: torch.Tensor
     grad: torch.Tensor | None = None
+    requires_grad: bool = True

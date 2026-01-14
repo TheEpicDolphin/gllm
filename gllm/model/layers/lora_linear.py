@@ -25,6 +25,9 @@ class LoRaLinear(BaseModule):
         self.linear_B = Linear(B)
         self.linear_A = Linear(A)
         
+        # Backbone weights are frozen, no gradient tracking.
+        self.linear_w.requires_grad = False
+        
         self.child_modules = [
             self.linear_W,
             self.linear_B,

@@ -15,15 +15,33 @@ class BaseModule:
         self._preloaded_weights = None
         self.child_modules: list[BaseModule] = []
         
-        self.training: bool = False
+        self._training: bool = False
         self._cache = None
         self._grad = None
+    
+    
+    @property
+    def training(self):
+        return self._training
         
         
-    def set_training_mode(self, training):
-        self.training = training
+    @training.setter
+    def training(self, value):
+        self._training = value
         for module in self.child_modules:
-            module.set_training_mode(training)
+            module._training = value
+    
+    
+    @property
+    def requires_grad(self):
+        return self._parameter is not None and self._parameter.requires_grad
+    
+    
+    @requires_grad.setter
+    def requires_grad(self, value):
+        self._parameter.requires_grad = value
+        for module in self.child_modules:
+            module.requires_grad = value
     
     
     def parameters(self) -> Iterable[Parameter]:
@@ -117,12 +135,12 @@ class BaseModule:
         **kwargs
     ) -> torch.Tensor:
         weights = self._get_weights(dL_dy.device)
-        dL_dx, grad = self._backward_impl(dL_dy, weights, *args, **kwargs)
+        dL_dx, dL_dW = self._backward_impl(dL_dy, weights, *args, **kwargs)
         
         # Track gradients.
-        if grad is not None:
+        if self.requires_grad:
             if self._parameter.grad is None:
-                self._parameter.grad = torch.zeros_like(grad)
-            self._parameter.grad += grad
+                self._parameter.grad = torch.zeros_like(dL_dW)
+            self._parameter.grad += dL_dW
         
         return dL_dx

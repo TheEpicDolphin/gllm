@@ -11,17 +11,18 @@ from gllm.ops.attention.reference_attention import reference_attention
 
 @dataclass
 class AttentionMetadata:
+    # [B, T_q]
+    positions: torch.Tensor
     # [B]
     query_lens: torch.Tensor
     # [B]
     seq_lens: torch.Tensor
-    max_seq_len: int
     # [B, max_num_blocks]
-    block_table: torch.Tensor
+    block_table: torch.Tensor | None
     # [B, T]
-    slot_mapping: torch.Tensor
+    slot_mapping: torch.Tensor | None
     # [B, T_q]
-    query_slot_mapping: torch.Tensor
+    query_slot_mapping: torch.Tensor | None
     # [B, T_q, T]
     bias: torch.Tensor
 
@@ -163,20 +164,22 @@ class Attention(BaseModule):
         # TODO: Remove dummy query slots to reduce copying.
         # [B, T_q]
         query_slot_mapping = attention_metadata.query_slot_mapping
-        # [B * T_q]
-        query_slot_mapping = query_slot_mapping.view(-1)
-        kv_dtype = kv_cache.dtype
-        kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
-        kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+        if query_slot_mapping is not None:
+            # [B * T_q]
+            query_slot_mapping = query_slot_mapping.view(-1)
+            kv_dtype = kv_cache.dtype
+            kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+            kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
         
         # Get sequence K/Vs.
         # [B, T]
         slot_mapping = attention_metadata.slot_mapping
-        # [B * T]
-        slot_mapping = slot_mapping.view(-1)
-        # [B, T, num_kv_heads, head_dim]
-        k = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
-        v = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
+        if slot_mapping is not None:
+            # [B * T]
+            slot_mapping = slot_mapping.view(-1)
+            # [B, T, num_kv_heads, head_dim]
+            k = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
+            v = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
         
         # Compute attention.
         attn_out, p = reference_attention(

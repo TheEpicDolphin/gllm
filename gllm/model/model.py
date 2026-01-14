@@ -192,14 +192,12 @@ class Model(BaseModule):
         # [B, T_q]
         x: torch.Tensor,
         weights: torch.Tensor | None,
-        # [B, T_q]
-        positions: torch.Tensor,
         attention_metadata: AttentionMetadata
     ) -> torch.Tensor:    
         # Get RoPE rotation matrix for each position.
         # [B, T_q, head_dim // 2, 2, 2]
-        cos_pos = self.cos_pos_cache[positions]
-        sin_pos = self.sin_pos_cache[positions]
+        cos_pos = self.cos_pos_cache[attention_metadata.positions]
+        sin_pos = self.sin_pos_cache[attention_metadata.positions]
         
         # [B, T_q, hidden_size]
         h = self.embed.forward(x)

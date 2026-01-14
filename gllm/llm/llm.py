@@ -235,7 +235,6 @@ class LLM:
         seq_lens = seq_lens[:bs]
         context_lens = seq_lens - query_lens
         max_query_len = query_lens.max()
-        max_seq_len = seq_lens.max()
         max_context_len = context_lens.max()
         max_num_blocks = num_blocks[:bs].max()
         block_table = block_table[:bs, :max_num_blocks]
@@ -283,9 +282,9 @@ class LLM:
         
         # Update attention metadata.
         attention_metadata = AttentionMetadata(
+            positions=query_token_positions,
             query_lens=query_lens,
             seq_lens=seq_lens,
-            max_seq_len=max_seq_len,
             block_table=block_table,
             slot_mapping=padded_slot_mapping,
             query_slot_mapping=query_slot_mapping,
@@ -302,7 +301,6 @@ class LLM:
         
         return InputBatch(
             query_token_ids=query_token_ids,
-            positions=query_token_positions,
             attention_metadata=attention_metadata,
             sampling_metadata=sampling_metadata,
         )
@@ -314,14 +312,12 @@ class LLM:
     ) -> tuple[list[int], list[TokenLogProbs]]:
         # [B, T_q]
         input_token_ids = input_batch.query_token_ids
-        positions = input_batch.positions
         attn_metadata = input_batch.attention_metadata
         
         with record_function("model.forward"):
             # [B, T_q, hidden_size]
             logits = self.model.forward(
                 input_token_ids,
-                positions,
                 attn_metadata
             )
         assert not torch.isnan(logits).any()

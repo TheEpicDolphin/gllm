@@ -14,10 +14,9 @@ class Trainer:
         loss_fn,
         optimizer,
         num_epochs: int,
-        device: str,
     ):
-        # Set model to "training".
-        model.set_training_mode(True)
+        # Enable training.
+        model.training = True
         
         for epoch in range(num_epochs):
             for step, batched_samples in enumerate(dataloader):
@@ -28,24 +27,53 @@ class Trainer:
                 # Join prompt and completion token ids together.
                 batched_token_ids = []
                 completion_mask = []
-                max_len = max((len(prompt) + len(completion)) for prompt, completion in zip(batched_prompt_ids, batched_completion_ids))
-                for prompt_ids, completion_ids in zip(batched_prompt_ids, batched_completion_ids):
-                    # Pad sequences so that they all have the same length.
+                seq_lens = [len(prompt) + len(completion) for prompt, completion in zip(batched_prompt_ids, batched_completion_ids)]
+                max_seq_len = max(seq_lens)
+                for seq_len, prompt_ids, completion_ids in zip(seq_lens, batched_prompt_ids, batched_completion_ids):
+                    # Pad sequences so that they all have the same length, T.
                     prompt_len = len(prompt_ids)
                     completion_len = len(completion_ids)
-                    seq_len = prompt_len + completion_len
-                    pad_len = max_len - seq_len
+                    pad_len = max_seq_len - seq_len
                     pad_token_ids = [model.pad_token_id] * pad_len
                     batched_token_ids.append(prompt_ids + completion_ids + pad_token_ids)
                     completion_mask.append([False] * prompt_len + [True] * completion_len + [False] * pad_len)
-                batched_token_ids_tensor = torch.tensor(batched_token_ids, device=device)
-                completion_mask_tensor = torch.tensor(completion_mask, device=device)
+                batched_token_ids_tensor = torch.tensor(batched_token_ids, device=model.device)
+                completion_mask_tensor = torch.tensor(completion_mask, device=model.device)
+                seq_lens_tensor = torch.tensor(seq_lens, device=model.device)
+                
+                # Calculate token positions.
+                B, _ = batched_token_ids_tensor.shape
+                positions = torch.arange(max_seq_len, device=model.device)
+                positions = positions.unsqueeze(0).expand(B, -1)
+                
+                # Calculate causal attention bias.
+                # [B, T, T]
+                bias = torch.full(
+                    (B, max_seq_len, max_seq_len),
+                    float("-inf"),
+                    dtype=model.dtype,
+                    device=model.device,
+                )
+                bias.triu_(diagonal=1)
                 
                 # Forward pass.
                 # [B, T]
                 input_ids = batched_token_ids_tensor[:, :-1]
+                attention_metadata = AttentionMetadata(
+                    positions=positions,
+                    query_lens=seq_lens_tensor,
+                    seq_lens=seq_lens_tensor,
+                    bias=bias,
+                    # No KV caching for training.
+                    block_table=None,
+                    slot_mapping=None,
+                    query_slot_mapping=None,
+                )
                 # [B, T]
-                logits = model.forward(input_ids)
+                logits = model.forward(
+                    input_ids,
+                    attention_metadata,
+                )
                 
                 # Compute loss.
                 # [B, T]
@@ -69,7 +97,7 @@ class Trainer:
                     print(f"epoch {epoch}, step {step}, loss={loss.item()}")
         
         # Disable training.
-        model.set_training_mode(False)
+        model.training = False
 
 def main():
     parser = argparse.ArgumentParser()
