@@ -2,6 +2,7 @@ import torch
 
 from gllm.model.layers.base_module import BaseModule
 
+
 class Embedding(BaseModule):
     def __init__(
         self,

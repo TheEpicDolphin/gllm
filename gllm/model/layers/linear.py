@@ -3,6 +3,7 @@ import torch.nn.functional as F
 
 from gllm.model.layers.base_module import BaseModule
 
+
 class Linear(BaseModule):
     def __init__(
         self,
