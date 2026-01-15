@@ -211,8 +211,6 @@ class Attention(BaseModule):
         dL_do = self.linear_o.backward(dL_dy)
                 
         # O = P @ V
-        print("dL_do: ", dL_do.shape)
-        print("v: ", v.shape)
         dL_dp = dL_do @ v.transpose(-1, -2)
         dL_dv = p.transpose(-1, -2) @ dL_do
         
