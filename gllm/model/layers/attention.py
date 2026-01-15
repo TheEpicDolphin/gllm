@@ -18,11 +18,11 @@ class AttentionMetadata:
     # [B]
     seq_lens: torch.Tensor
     # [B, max_num_blocks]
-    block_table: torch.Tensor | None
+    block_table: torch.Tensor
     # [B, T]
-    slot_mapping: torch.Tensor | None
+    slot_mapping: torch.Tensor
     # [B, T_q]
-    query_slot_mapping: torch.Tensor | None
+    query_slot_mapping: torch.Tensor
     # [B, T_q, T]
     bias: torch.Tensor
 
@@ -137,7 +137,7 @@ class Attention(BaseModule):
         # [B, T_q, head_dim // 2]
         sin_pos: torch.Tensor,
         # [2, max_num_blocks * block_size, num_kv_heads, head_dim]
-        kv_cache: torch.Tensor,
+        kv_cache: torch.Tensor | None,
         attention_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         B, T_q, hidden_size = x.shape
@@ -160,21 +160,20 @@ class Attention(BaseModule):
         q = self.rope_forward(q, cos_pos, sin_pos)
         k = self.rope_forward(k, cos_pos, sin_pos)
         
-        # Cache query token K/Vs.
-        # TODO: Remove dummy query slots to reduce copying.
-        # [B, T_q]
-        query_slot_mapping = attention_metadata.query_slot_mapping
-        if query_slot_mapping is not None:
+        if kv_cache is not None:
+            # Cache query token K/Vs.
+            # TODO: Remove dummy query slots to reduce copying.
+            # [B, T_q]
+            query_slot_mapping = attention_metadata.query_slot_mapping
             # [B * T_q]
             query_slot_mapping = query_slot_mapping.view(-1)
             kv_dtype = kv_cache.dtype
             kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
             kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
-        
-        # Get sequence K/Vs.
-        # [B, T]
-        slot_mapping = attention_metadata.slot_mapping
-        if slot_mapping is not None:
+            
+            # Get sequence K/Vs.
+            # [B, T]
+            slot_mapping = attention_metadata.slot_mapping
             # [B * T]
             slot_mapping = slot_mapping.view(-1)
             # [B, T, num_kv_heads, head_dim]

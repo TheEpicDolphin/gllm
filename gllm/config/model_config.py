@@ -25,3 +25,4 @@ class ModelConfig:
     eos_token_ids: list[int]
     kv_dtype: torch.dtype
     rope_theta: float
+    vocab_size: int

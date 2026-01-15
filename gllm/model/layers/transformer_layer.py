@@ -52,7 +52,7 @@ class TransformerLayer(BaseModule):
         # [B, T_q, head_dim // 2]
         sin_pos: torch.Tensor,
         # [2, max_num_blocks * block_size, num_kv_heads, head_dim]
-        kv_cache: torch.Tensor,
+        kv_cache: torch.Tensor | None,
         attention_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         # input layernorm

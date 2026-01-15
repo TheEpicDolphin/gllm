@@ -1,6 +1,5 @@
 import argparse
 
-from gllm.config.generator_config import GeneratorConfig
 from gllm.model.model import Model
 from gllm.training.cross_entropy_loss import CrossEntropyLoss
 from gllm.training.sgd import SGD
@@ -121,11 +120,7 @@ def main():
     # Create model.
     model = Model(
         hf_model=args.model,
-        gen_config=GeneratorConfig(
-            block_size=16,
-            max_batch_size=8,
-            max_seq_len=256,
-        ),
+        max_seq_len=1024,
         device=args.device,
     )
     

@@ -9,7 +9,6 @@ from safetensors.torch import load_file
 from tokenizers import Tokenizer
 from torch.profiler import record_function
 
-from gllm.config.generator_config import GeneratorConfig
 from gllm.config.model_config import ModelConfig
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.layers.attention import AttentionMetadata
@@ -31,8 +30,11 @@ class Model(BaseModule):
     def __init__(
         self,
         hf_model: HuggingFaceModel,
-        gen_config: GeneratorConfig,
+        max_seq_len: int,
         device: str,
+        dtype: str | None = None,
+        kv_dtype: str | None = None,
+        cpu_offloading: bool = False,
         local_cache_dir: str | None = None,
     ):
         super().__init__(None)
@@ -41,8 +43,8 @@ class Model(BaseModule):
             # Use default cache directory.
             local_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "gllm")
             
-        self.gen_config = gen_config
         self.device = torch.device(device)
+        self.cpu_offloading = device != "cpu" and cpu_offloading
         
         # Create directories for model and tokenizer files.
         model_cache_dir = os.path.join(local_cache_dir, "models")
@@ -65,8 +67,8 @@ class Model(BaseModule):
         )
         with open(local_config_path, "r") as f:
             config = json.load(f)
-        self.model_config = ModelConfig(
-            dtype=getattr(torch, gen_config.model_dtype or config["torch_dtype"]),
+        self.config = ModelConfig(
+            dtype=getattr(torch, dtype or config["torch_dtype"]),
             hidden_size=config["hidden_size"],
             head_dim=config["head_dim"],
             intermediate_size=config["intermediate_size"],
@@ -76,8 +78,9 @@ class Model(BaseModule):
             num_kv_heads=config["num_key_value_heads"],
             rms_norm_eps=config["rms_norm_eps"],
             eos_token_ids=self.parse_eos_token_ids(config),
-            kv_dtype=getattr(torch, gen_config.kv_dtype or config["torch_dtype"]),
+            kv_dtype=getattr(torch, kv_dtype or config["torch_dtype"]),
             rope_theta=config["rope_theta"],
+            vocab_size=config["vocab_size"],
         )
         
         # Download model safetensors.
@@ -89,20 +92,13 @@ class Model(BaseModule):
         # If cpu_offloading is true, weights are kept in CPU RAM and loaded to GPU only when needed.
         initial_weights_device = CPU_DEVICE if self.cpu_offloading else device
         safetensors = load_file(local_model_path, device=initial_weights_device)
-        
-        # Initialize paged KV cache.
-        self.paged_kv_cache = PagedKVCache(
-            model_config=self.model_config,
-            gen_config=gen_config,
-            device=device,
-        )
 
         # Initialize transformer layers.
         self.layers: list[TransformerLayer] = []
-        for layer_idx in range(self.model_config.num_layers):
+        for layer_idx in range(self.config.num_layers):
             self.layers.append(TransformerLayer(
                 layer_idx,
-                model_config=self.model_config,
+                model_config=self.config,
                 safetensors=safetensors,
             ))
         
@@ -110,7 +106,7 @@ class Model(BaseModule):
         final_norm_weights = safetensors[f"model.norm.weight"].to(self.dtype)
         self.final_norm = RMSNorm(
             weights=final_norm_weights,
-            eps=self.model_config.rms_norm_eps
+            eps=self.config.rms_norm_eps
         )
         
         # Get embedding matrix. This is indexed into using the token
@@ -123,10 +119,10 @@ class Model(BaseModule):
         
         # Construct RoPE sin/cos caches for positions up to T_max.
         # [T_max]
-        p = torch.arange(gen_config.max_seq_len, device=device)
+        p = torch.arange(max_seq_len, device=device)
         # [head_dim // 2]
         m = torch.arange(self.head_dim // 2, device=device)
-        theta_m = self.rope_theta**(-2 * m / self.head_dim)
+        theta_m = self.config.rope_theta**(-2 * m / self.head_dim)
         # [T_max, head_dim // 2]
         p_theta_m = p.unsqueeze(1) * theta_m
         # [T_max, head_dim // 2]
@@ -147,15 +143,11 @@ class Model(BaseModule):
             self.final_norm,
             self.unembed,
         ]
-        
-        
-    @property
-    def cpu_offloading(self) -> bool:
-        return self.device != "cpu" and self.gen_config.cpu_offloading
+
 
     @property
     def eos_token_ids(self) -> list[int]:
-        return self.model_config.eos_token_ids
+        return self.config.eos_token_ids
         
         
     @property
@@ -165,16 +157,17 @@ class Model(BaseModule):
         
     @property
     def dtype(self) -> str:
-        return self.model_config.dtype
+        return self.config.dtype
         
         
     @property
     def head_dim(self) -> int:
-        return self.model_config.head_dim
-        
+        return self.config.head_dim
+    
+    
     @property
-    def rope_theta(self) -> float:
-        return self.model_config.rope_theta
+    def vocab_size(self) -> int:
+        return self.config.vocab_size
         
         
     def parse_eos_token_ids(self, config):
@@ -192,7 +185,8 @@ class Model(BaseModule):
         # [B, T_q]
         x: torch.Tensor,
         weights: torch.Tensor | None,
-        attention_metadata: AttentionMetadata
+        attention_metadata: AttentionMetadata,
+        kv_cache: PagedKVCache | None = None,
     ) -> torch.Tensor:    
         # Get RoPE rotation matrix for each position.
         # [B, T_q, head_dim // 2, 2, 2]
@@ -220,7 +214,7 @@ class Model(BaseModule):
                     h,
                     cos_pos,
                     sin_pos,
-                    self.paged_kv_cache.get_layer_kv_cache(idx),
+                    kv_cache.get_layer_kv_cache(idx) if kv_cache is not None else None,
                     attention_metadata
                 )
             

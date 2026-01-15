@@ -4,8 +4,7 @@ import pytest
 
 import torch
 
-from gllm.config.generator_config import GeneratorConfig
-from gllm.model.model import Model
+from gllm.model.model import Model, HuggingFaceModel
 from gllm.ops.attention.flash_attention import flash_attention
 from gllm.ops.attention.reference_attention import reference_attention
 
@@ -26,18 +25,14 @@ async def test_model_backward(
     # Create model.
     model = Model(
         hf_model=HuggingFaceModel.LLAMA_3_2_1B_INSTUCT,
-        gen_config=GeneratorConfig(
-            block_size=16,
-            max_batch_size=8,
-            max_seq_len=256,
-        ),
+        max_seq_len=1024,
         device="cuda",
     )
     model.training = True
     
     # [B, T]
-    input_ids  = torch.randint(0, vocab_size, (B, T))
-    target_ids = torch.randint(0, vocab_size, (B, T))
+    input_ids  = torch.randint(0, model.vocab_size, (B, T))
+    target_ids = torch.randint(0, model.vocab_size, (B, T))
     
     # [B]
     seq_lens = torch.tensor([T] * B, dtype=torch.int32, device=model.device)
