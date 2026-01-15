@@ -106,13 +106,14 @@ def reference_attention_bwd(
     ds_dkr = q * scale
     dL_dkr = dL_ds.transpose(-1, -2) @ ds_dkr
     
-    # Swap sequence and heads dimensions back.
+    # Swap sequence and head dimensions back.
     dL_dqr = dL_dqr.transpose(1, 2)
     dL_dkr = dL_dkr.transpose(1, 2)
     dL_dv = dL_dv.transpose(1, 2)
     
     if num_groups > 1:
-        # Undo broadcasting.
-        dL_dkr = dL_dkr[:, :, ::num_groups, :]
-        dL_dv = dL_dv[:, :, ::num_groups, :]
+        # MQA, which means we repeated KV heads during forward pass. During backward
+        # pass, we must sum the contributions of the repeated heads.
+        dL_dkr = torch.sum(dL_dkr.reshape(B, -1, num_kv_heads, num_groups, head_dim), dim=-2)
+        dL_dv = torch.sum(dL_dv.reshape(B, -1, num_kv_heads, num_groups, head_dim), dim=-2)
     return dL_dqr, dL_dkr, dL_dv
