@@ -207,10 +207,12 @@ class Attention(BaseModule):
         # Backpropagation logic:
         # dL/dx = dL/dy * dy/dO * [dO/dP * [dP/dQ * dQ/dx + dP/dK * dK/dx] + dO/dV * dV/dx]
     
-        # y = W_o @ O
+        # y = O @ W_o^T
         dL_do = self.linear_o.backward(dL_dy)
                 
         # O = P @ V
+        print("dL_do: ", dL_do.shape)
+        print("v: ", v.shape)
         dL_dp = dL_do @ v.transpose(-1, -2)
         dL_dv = p.transpose(-1, -2) @ dL_do
         
@@ -244,10 +246,10 @@ class Attention(BaseModule):
         dL_dk = self.rope_backward(dL_dkr, cos_pos, sin_pos)
         
         # Q, K, and V linear projections.
-        dL_dxq = self.linear_q.backward(dL_dq)
-        dL_dxk = self.linear_k.backward(dL_dk)
-        dL_dxv = self.linear_v.backward(dL_dv)
-        dL_dx = dL_dxq + dL_dxk + dL_dxv
+        dL_dx_q = self.linear_q.backward(dL_dq)
+        dL_dx_k = self.linear_k.backward(dL_dk)
+        dL_dx_v = self.linear_v.backward(dL_dv)
+        dL_dx = dL_dx_q + dL_dx_k + dL_dx_v
         return dL_dx, None
         
         

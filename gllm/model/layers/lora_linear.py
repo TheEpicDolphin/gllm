@@ -42,9 +42,8 @@ class LoRaLinear(BaseModule):
     ) -> torch.Tensor:
         # Cache input for training backward pass.
         self.cache_for_backward(x)
-        # out = (W + (alpha / r) * B @ A) @ x
-        #     = W @ x + (alpha / r) * B @ (A @ x)
-        # We deliberately avoid materializing the B @ A matrix.
+        # y = x @ (W + s(B @ A))^T = x(W^T + s(B @ A)^T) = xW^T + s((x @ A^T) @ B^T)
+        # We deliberately avoid materializing the BA matrix.
         h_w = self.linear_W.forward(x)
         h_a = self.linear_A.forward(x)
         h_b = self.linear_B.forward(h_a)
@@ -56,20 +55,20 @@ class LoRaLinear(BaseModule):
         dL_dy: torch.Tensor,
         weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self._cache
+        x, = self._cache
 
-        # y = h_w + h_b
+        # y = h_w + s * h_b
         # dL/dh_w = dL/dy * dy/dh_w = dL/dy
-        # dL/dh_b = dL/dy * dy/dh_b = dL/dy * (alpha / r)
+        # dL/dh_b = dL/dy * dy/dh_b = dL/dy * s
         dL_dh_w = dL_dy
         dL_dh_b = dL_dy * self.scale
         
-        # h_b = B @ h_a
+        # h_b = h_a @ B^T
         dL_dh_a = self.linear_B.backward(dL_dh_b)
         
-        # h_w = W @ x
+        # h_w = x @ W^T
         dL_dx1 = self.linear_W.backward(dL_dh_w)
-        # h_a = A @ x
+        # h_a = x @ A^T
         dL_dx2 = self.linear_A.backward(dL_dh_a)
         dL_dx = dL_dx1 + dL_dx2
         return dL_dx, None

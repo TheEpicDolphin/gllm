@@ -50,7 +50,7 @@ class CrossEntropyLoss:
         # dL/dz_j = -(1/N) * ((y_1/p_1) * dp_1/dz_j + (y_2/p_2) * dp_2/dz_j + ... + (y_V/p_V) * dp_V/dz_j)
         # dL/dz_j = (1/N) * (p_j - y_j)
         # One-hot y is 1 for j == target, and zero otherwise.
-        target_one_hot = F.one_hot(self.target_ids, num_classes=vocab_size).float()
+        target_one_hot = F.one_hot(self.target_ids, num_classes=vocab_size)
         dL_dy = probs - target_one_hot
         
         N = B * T

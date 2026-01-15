@@ -39,7 +39,7 @@ class RMSNorm(BaseModule):
         dL_dy: torch.Tensor,
         weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self._cache
+        x, = self._cache
         w = weights
         N = x.shape[-1]
         inv_rms = 1 / self.rms(x)
@@ -62,7 +62,7 @@ class RMSNorm(BaseModule):
         #
         # Below code produces the same result as above, but without materializing
         # the NxN dy/dx jacobian matrix.
-        dot = torch.sum(dL_dy, x * w, dim=-1, keepdim=True)
+        dot = torch.sum(dL_dy * x * w, dim=-1, keepdim=True)
         dL_dx = dL_dy * w * inv_rms - x * dot * (1/N) * (inv_rms**3)
         
         # Theory:

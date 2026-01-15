@@ -29,7 +29,7 @@ class BaseModule:
     def training(self, value):
         self._training = value
         for module in self.child_modules:
-            module._training = value
+            module.training = value
     
     
     @property
@@ -93,9 +93,9 @@ class BaseModule:
             module.unload_weights()
             
     
-    def cache_for_backward(self, *args, **kwargs):
-        if self.training:
-            self._cache = (args, kwargs)
+    def cache_for_backward(self, *args):
+        if self._training:
+            self._cache = (args)
         
     
     def _forward_impl(

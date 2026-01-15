@@ -19,7 +19,7 @@ class Linear(BaseModule):
     ) -> torch.Tensor:
         # Cache input for training backward pass.
         self.cache_for_backward(x)
-        # out = W @ x
+        # y = x @ W^T
         return F.linear(x, weights)
         
         
@@ -28,19 +28,19 @@ class Linear(BaseModule):
         dL_dy: torch.Tensor,
         weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self._cache
+        x, = self._cache
         
         # Theory:
-        # dL/dx_ij = dL/dy_1j * dy_1j/dx_ij + dL/dy_2j * dy_2j/dx_ij + ... + dL/dy_Nj * dy_Nj/dx_ij
-        #          = dL/dy_1j * w_1j + dL/dy_2j * w_2j + ... + dL/dy_Nj * w_Nj
+        # dL/dx_ij = dL/dy_i1 * dy_i1/dx_ij + dL/dy_i2 * dy_i2/dx_ij + ... + dL/dy_iN * dy_iN/dx_ij
+        #          = dL/dy_i1 * w_1j + dL/dy_i2 * w_2j + ... + dL/dy_iN * w_Nj
         # Which is equivalent to:
-        # dL/dx = W^T @ dL/dy
-        dL_dx = weights.transpose(-1, -2) @ dL_dy
+        # dL/dx = dL/dy @ W
+        dL_dx = dL_dy @ weights
         
         # Theory:
-        # dL/dw_ij = dL/dy_i1 * dy_i1/dw_ij + dL/dy_i2 * dy_i2/dw_ij + ... + dL/dy_iN * dy_iN/dw_ij
-        #          = dL/dy_i1 * x_j1 + dL/dy_i2 * x_j2 + ... + dL/dy_iN * x_jN
+        # dL/dw_ij = dL/dy_1j * dy_1j/dw_ij + dL/dy_2j * dy_2j/dw_ij + ... + dL/dy_Mj * dy_Mj/dw_ij
+        #          = dL/dy_1j * x_1j + dL/dy_2j * x_2j + ... + dL/dy_Nj * x_Mj
         # Which is equivalent to:
-        # dL/dW = dL/dy @ x^T
-        dL_dw = dL_dy @ x.transpose(-1, -2)
+        # dL/dW = dL/dy @ x
+        dL_dw = dL_dy.transpose(-1, -2) @ x
         return dL_dx, dL_dw

@@ -24,7 +24,6 @@ class FFN(BaseModule):
         # [hidden_size, intermediate_size]
         W_down = safetensors[f"{ffn_prefix}.down_proj.weight"].to(dtype)
 
-        
         self.linear_up = Linear(W_up)
         self.linear_gate = Linear(W_gate)
         self.linear_down = Linear(W_down)
@@ -40,7 +39,7 @@ class FFN(BaseModule):
             self.act_backward = self.silu_backward
         else:
             raise NotImplementedError(f"The '{model_config.act_func}' activation function is not yet implemented.")
-
+        
 
     def silu_backward(
         self,
@@ -85,7 +84,7 @@ class FFN(BaseModule):
         dL_dy: torch.Tensor,
         weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self._cache
+        x, = self._cache
         g, u, a = self.gated_activation(x)
         
         # Backpropagation logic:
@@ -103,7 +102,7 @@ class FFN(BaseModule):
         
         # Gate and up projections.
         dL_dx1 = self.linear_gate.backward(dL_dg)
-        dL_dx2 = a * self.linear_up.backward(dL_du)
+        dL_dx2 = self.linear_up.backward(dL_du)
         dL_dx = dL_dx1 + dL_dx2
         return dL_dx, None
         
