@@ -99,7 +99,6 @@ def test_model_backward_correctness(
         
         # Caculate approximate numerical gradient magnitude along the random direction.
         # L(W + eps)
-        #param.weights += eps * u
         param.weights = W + eps * u
         logits = model.forward(
             input_ids,
@@ -110,7 +109,6 @@ def test_model_backward_correctness(
             target_ids,
         ).item()
         # L(W - eps)
-        #param.weights -= 2 * eps * u
         param.weights = W - eps * u
         logits = model.forward(
             input_ids,
