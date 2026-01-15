@@ -66,6 +66,6 @@ class RMSNorm(BaseModule):
         dL_dx = dL_dy * w * inv_rms - x * dot * (1/N) * (inv_rms**3)
         
         # Theory:
-        # dL/dw_i = dL/dy_i * dy_i/w_i = dL/dy_i * (x_i / RMS(x))
-        dL_dw = dL_dy * x * inv_rms
+        # dL/dw_i = dL/dy_i * dy_i/dw_i = dL/dy_i * (x_i / RMS(x))
+        dL_dw = dL_dy * (x * inv_rms)
         return dL_dx, dL_dw

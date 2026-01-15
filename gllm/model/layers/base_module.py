@@ -17,7 +17,6 @@ class BaseModule:
         
         self._training: bool = False
         self._cache = None
-        self._grad = None
     
     
     @property

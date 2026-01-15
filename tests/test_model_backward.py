@@ -69,43 +69,16 @@ def test_model_backward_correctness(
     for p in model.parameters():
         p.requires_grad = False
     
-    eps_base = 1e-3
+    eps = 1e-3
     for param in model.parameters():
-        idx = torch.randint(0, param.weights.numel(), ()).item()
-        W_flat = param.weights.view(-1)
-        W_i = W_flat[idx].item()
-        eps_i = eps_base * max(1.0, abs(W_i))
-        
-        # L(W + eps)
-        W_flat[idx] = W_i + eps_i
-        logits = model.forward(
-            input_ids,
-            attention_metadata,
-        )
-        loss_plus_eps = loss_fn.forward(
-            logits,
-            target_ids,
-        ).item()
-        
-        # L(W - eps)
-        W_flat[idx] = W_i - eps_i
-        logits = model.forward(
-            input_ids,
-            attention_metadata,
-        )
-        loss_minus_eps = loss_fn.forward(
-            logits,
-            target_ids,
-        ).item()
-        
-        # dL/dW = (L(W_i + eps) - L(W_i - eps)) / (2 * eps)
-        expected_grad = (loss_plus_eps - loss_minus_eps) / (2 * eps_i)
+        W = param.weights
+        # Create a random direction to perturb the weights along.
+        u = torch.randn_like(param.weights)
+        u /= u.norm()
         
         # Enable gradients tracking for this parameter.
         param.requires_grad = True
-        
-        # Run model forward pass with original weight.
-        W_flat[idx] = W_i
+        # Run model forward pass with original weights.
         logits = model.forward(
             input_ids,
             attention_metadata,
@@ -118,16 +91,40 @@ def test_model_backward_correctness(
         dL_dy = loss_fn.backward()
         # Run model backward pass to compute parameter gradients.
         model.backward(dL_dy)
-        
-        # Compare expected numeric gradient with actual from backward pass.
-        actual_grad = param.grad.view(-1)[idx].item()
-        abs_err = abs(expected_grad - actual_grad)
-        rel_err = abs_err / abs(expected_grad)
-        print("abs_err: ", abs_err)
-        print("rel_err: ", rel_err)
-        assert abs_err < 1e-2
-        
+        # Compute magnitude of gradient along the random direction.
+        actual_grad = torch.sum(param.grad * u).item()
         # Zero this parameter's gradients.
         param.requires_grad = False
         param.grad = None
+        
+        # Caculate approximate numerical gradient magnitude along the random direction.
+        # L(W + eps)
+        #param.weights += eps * u
+        param.weights = W + eps * u
+        logits = model.forward(
+            input_ids,
+            attention_metadata,
+        )
+        loss_plus_eps = loss_fn.forward(
+            logits,
+            target_ids,
+        ).item()
+        # L(W - eps)
+        #param.weights -= 2 * eps * u
+        param.weights = W - eps * u
+        logits = model.forward(
+            input_ids,
+            attention_metadata,
+        )
+        loss_minus_eps = loss_fn.forward(
+            logits,
+            target_ids,
+        ).item()
+        # dL/dW ~ (L(W_i + eps) - L(W_i - eps)) / (2 * eps)
+        numerical_grad = (loss_plus_eps - loss_minus_eps) / (2 * eps)
+        
+        # Compare approximate numerical gradient with actual gradient from backward pass.
+        abs_err = abs(numerical_grad - actual_grad)
+        rel_err = abs_err / abs(numerical_grad)
+        assert abs_err < 1e-4 and rel_err < 1e-4
     

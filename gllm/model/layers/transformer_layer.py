@@ -37,8 +37,8 @@ class TransformerLayer(BaseModule):
         self.child_modules = [
             self.input_norm,
             self.attention,
-            self.ffn,
             self.post_attn_norm,
+            self.ffn,
         ]
         
 
