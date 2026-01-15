@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from gllm.config.model_config import ModelConfig
 from gllm.model.layers.base_module import BaseModule
 from gllm.model.layers.linear import Linear
-from gllm.ops.attention.reference_attention import reference_attention
+from gllm.ops.attention.reference_attention import reference_attention_fwd, reference_attention_bwd
 
 @dataclass
 class AttentionMetadata:
@@ -99,7 +99,7 @@ class Attention(BaseModule):
         # [B, T_q, 1, head_dim // 2]
         cos_pos = cos_pos.unsqueeze(2)
         sin_pos = sin_pos.unsqueeze(2)
-        
+
         # Apply rotations.
         x_r = torch.stack(
             [
@@ -123,7 +123,7 @@ class Attention(BaseModule):
         # y = R @ x
         # dL_dx = R^T @ dL_dy
         # R^T is just R, but with sin(theta) negated.
-        dL_dx = self.rope_forward(dL_dy, cos_pos, -sin_pos) @ dL_dy
+        dL_dx = self.rope_forward(dL_dy, cos_pos, -sin_pos)
         return dL_dx
         
     
@@ -157,8 +157,8 @@ class Attention(BaseModule):
         v = v.view(B, T_q, self.num_kv_heads, self.head_dim)
         
         # Apply RoPE rotation matrix to q and k.
-        q = self.rope_forward(q, cos_pos, sin_pos)
-        k = self.rope_forward(k, cos_pos, sin_pos)
+        q_r = self.rope_forward(q, cos_pos, sin_pos)
+        k_r = self.rope_forward(k, cos_pos, sin_pos)
         
         if kv_cache is not None:
             # Cache query token K/Vs.
@@ -168,7 +168,7 @@ class Attention(BaseModule):
             # [B * T_q]
             query_slot_mapping = query_slot_mapping.view(-1)
             kv_dtype = kv_cache.dtype
-            kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+            kv_cache[0, query_slot_mapping, :, :] = k_r.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
             kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
             
             # Get sequence K/Vs.
@@ -177,14 +177,17 @@ class Attention(BaseModule):
             # [B * T]
             slot_mapping = slot_mapping.view(-1)
             # [B, T, num_kv_heads, head_dim]
-            k = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
-            v = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(q.dtype)
+            k_cache = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(k_r.dtype)
+            v_cache = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(v.dtype)
+        else:
+            k_cache = k_r
+            v_cache = v
         
         # Compute attention.
-        attn_out, p = reference_attention(
-            q,
-            k,
-            v,
+        attn_out, p = reference_attention_fwd(
+            q_r,
+            k_cache,
+            v_cache,
             attention_metadata.bias,
             return_probs=True,
         )
@@ -203,48 +206,29 @@ class Attention(BaseModule):
         weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         q, k, v, p, cos_pos, sin_pos = self._cache
-        
-        # TODO: Convert q, k and v shapes from (B, T, H, D) to (B, H, T, D).
-        # Repeat k and v # heads to match q.
+        B, _, num_q_heads, head_dim = q.shape
+        _, _, num_kv_heads, _ = k.shape
         
         # Backpropagation logic:
         # dL/dx = dL/dy * dy/dO * [dO/dP * [dP/dQ * dQ/dx + dP/dK * dK/dx] + dO/dV * dV/dx]
     
         # y = O @ W_o^T
         dL_do = self.linear_o.backward(dL_dy)
-                
-        # O = P @ V
-        dL_dp = dL_do @ v.transpose(-1, -2)
-        dL_dv = p.transpose(-1, -2) @ dL_do
         
-        # P = softmax(S)
-        #
-        # Theory:
-        # dp_i/ds_j = (i == j) * softmax(s) - e^s_i * e^s_j / sum(e^s)^2
-        # dp/ds = [ dy_1/dx_1   dy_2/dx_1   ... dy_N/dx_1 ]
-        #         [ dy_1/dx_2   dy_2/dx_2   ... dy_N/dx_2 ]
-        #         [                 . . .                 ]
-        #         [ dy_1/dx_N   dy_2/dx_N   ... dy_N/dx_N ]
-        # dp/ds @ dL/dp = [ dL/dp_1 * dp_1/ds_1 + dL/dp_2 * dp_2/ds_1 + ... + dL/dp_N * dp_N/ds_1 ]
-        #                 [ dL/dp_1 * dp_1/ds_2 + dL/dp_2 * dp_2/ds_2 + ... + dL/dp_N * dp_N/ds_2 ]
-        #                 [                                 . . .                                 ]
-        #                 [ dL/dp_1 * dp_1/ds_N + dL/dp_2 * dp_2/ds_N + ... + dL/dp_N * dp_N/ds_N ]
-        #
-        # Below code produces the same result as above, but without materializing
-        # the NxN dp/ds jacobian matrix.
-        dot = torch.sum(dL_dp * p, dim=-1, keepdim=True)
-        dL_ds = p * (dL_dp - dot)
-        
-        # S = Q @ K^T / sqrt(d)
-        scale = 1.0 / d**0.5
-        ds_dqr = k * scale
-        dL_dqr = dL_ds @ ds_dqr
-        ds_dkr = q * scale
-        dL_dkr = dL_ds.transpose(-1, -2) @ ds_dkr
+        # Attention
+        # [B, T, num_q_heads, head_dim]
+        dL_do = dL_do.view(B, -1, num_q_heads, head_dim)
+        dL_dqr, dL_dkr, dL_dv = reference_attention_bwd(dL_do, q, k, v, p)
         
         # RoPE
         dL_dq = self.rope_backward(dL_dqr, cos_pos, sin_pos)
         dL_dk = self.rope_backward(dL_dkr, cos_pos, sin_pos)
+        
+        # [B, T_q, num_q_heads * head_dim]
+        dL_dq = dL_dq.reshape(B, -1, num_q_heads * head_dim)
+        # [B, T_q, num_kv_heads * head_dim]
+        dL_dk = dL_dk.reshape(B, -1, num_kv_heads * head_dim)
+        dL_dv = dL_dv.reshape(B, -1, num_kv_heads * head_dim)
         
         # Q, K, and V linear projections.
         dL_dx_q = self.linear_q.backward(dL_dq)

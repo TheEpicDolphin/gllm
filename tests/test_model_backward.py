@@ -24,7 +24,8 @@ def test_model_backward_correctness(
     model = Model(
         hf_model=HuggingFaceModel.LLAMA_3_2_1B_INSTUCT,
         max_seq_len=1024,
-        device="cuda",
+        device="cpu",
+        dtype="float64",
     )
     model.training = True
     
@@ -64,12 +65,19 @@ def test_model_backward_correctness(
     
     loss_fn = CrossEntropyLoss()
     
-    eps = 1e-5
-    for param in model.parameters():
-        W = param.weights
+    # Disable gradients tracking for all parameters.
+    for p in model.parameters():
+        p.requires_grad = False
+    
+    eps_base = 1e-3
+    for param in reversed(list(model.parameters())):
+        idx = torch.randint(0, param.weights.numel(), ()).item()
+        W_flat = param.weights.view(-1)
+        W_i = W_flat[idx].item()
+        eps_i = eps_base * max(1.0, abs(W_i))
         
         # L(W + eps)
-        param.weights = W + eps
+        W_flat[idx] = W_i + eps_i
         logits = model.forward(
             input_ids,
             attention_metadata,
@@ -77,10 +85,10 @@ def test_model_backward_correctness(
         loss_plus_eps = loss_fn.forward(
             logits,
             target_ids,
-        )
+        ).item()
         
         # L(W - eps)
-        param.weights = W - eps
+        W_flat[idx] = W_i - eps_i
         logits = model.forward(
             input_ids,
             attention_metadata,
@@ -88,13 +96,16 @@ def test_model_backward_correctness(
         loss_minus_eps = loss_fn.forward(
             logits,
             target_ids,
-        )
+        ).item()
         
-        # dL/dW = (L(W + eps) - (L - eps)) / (2 * eps)
-        expected_grad = (loss_plus_eps - loss_minus_eps) / (2 * eps)
+        # dL/dW = (L(W_i + eps) - L(W_i - eps)) / (2 * eps)
+        expected_grad = (loss_plus_eps - loss_minus_eps) / (2 * eps_i)
         
-        # Run model forward pass with original weights.
-        param.weights = W
+        # Enable gradients tracking for this parameter.
+        param.requires_grad = True
+        
+        # Run model forward pass with original weight.
+        W_flat[idx] = W_i
         logits = model.forward(
             input_ids,
             attention_metadata,
@@ -109,9 +120,12 @@ def test_model_backward_correctness(
         model.backward(dL_dy)
         
         # Compare expected numeric gradient with actual from backward pass.
-        assert expected_grad == param.grad
+        actual_grad = param.grad.view(-1)[idx].item()
+        abs_err = abs(expected_grad - actual_grad)
+        rel_err = abs_err / abs(expected_grad)
+        assert abs_err < 1e-2
         
-        # Zero all grads.
-        for p in model.parameters():
-            p.grad = None
+        # Zero this parameter's gradients.
+        param.requires_grad = False
+        param.grad = None
     

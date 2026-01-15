@@ -3,8 +3,8 @@ import pytest
 
 import torch
 
-from gllm.ops.attention.flash_attention import flash_attention
-from gllm.ops.attention.reference_attention import reference_attention
+from gllm.ops.attention.flash_attention import flash_attention_fwd
+from gllm.ops.attention.reference_attention import reference_attention_fwd
 
 
 @pytest.mark.parametrize("B, T_q, T, H_q, H_kv, D", [
@@ -61,6 +61,6 @@ def test_flash_attention_correctness(
     query_bias.fill_(float("-inf"))
     query_bias.triu_(diagonal=1)
     
-    fa_out = flash_attention(q, k, v, bias)
-    ref_out = reference_attention(q, k, v, bias)
+    fa_out = flash_attention_fwd(q, k, v, bias)
+    ref_out = reference_attention_fwd(q, k, v, bias)
     assert torch.allclose(fa_out, ref_out, rtol=1e-3, atol=1e-3), f"mean diff: {(fa_out - ref_out).abs().mean()}, max diff: {(fa_out - ref_out).abs().max()}"

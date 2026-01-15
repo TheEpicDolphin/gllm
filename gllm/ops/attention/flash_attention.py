@@ -5,7 +5,7 @@ import triton.language as tl
 
 
 @triton.jit
-def flash_attention_kernel(
+def flash_attention_fwd_kernel(
     q_ptr,
     k_ptr,
     v_ptr,
@@ -155,7 +155,7 @@ def flash_attention_kernel(
     )
     
     
-def flash_attention(
+def flash_attention_fwd(
     # [B, T_q, num_q_heads, head_dim]
     q: torch.Tensor,
     # [B, T, num_kv_heads, head_dim]
@@ -182,7 +182,7 @@ def flash_attention(
     )
     
     out = torch.zeros_like(q)
-    flash_attention_kernel[grid](
+    flash_attention_fwd_kernel[grid](
         q, k, v, bias, out,
         q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k.stride(0), k.stride(1), k.stride(2), k.stride(3),
