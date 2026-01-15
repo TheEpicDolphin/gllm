@@ -70,7 +70,7 @@ def test_model_backward_correctness(
         p.requires_grad = False
     
     eps_base = 1e-3
-    for param in reversed(list(model.parameters())):
+    for param in model.parameters():
         idx = torch.randint(0, param.weights.numel(), ()).item()
         W_flat = param.weights.view(-1)
         W_i = W_flat[idx].item()
@@ -123,6 +123,8 @@ def test_model_backward_correctness(
         actual_grad = param.grad.view(-1)[idx].item()
         abs_err = abs(expected_grad - actual_grad)
         rel_err = abs_err / abs(expected_grad)
+        print("abs_err: ", abs_err)
+        print("rel_err: ", rel_err)
         assert abs_err < 1e-2
         
         # Zero this parameter's gradients.

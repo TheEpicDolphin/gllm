@@ -241,7 +241,7 @@ class Model(BaseModule):
         # l = W_e @ h_n
         dL_dh_n = self.unembed.backward(dL_dy)
         
-        # h_normed = RMSNorm(h_n)
+        # h_normed = RMSNorm(h)
         dL_dh = self.final_norm.backward(dL_dh_n)
         
         # Core transformer layer loop.
