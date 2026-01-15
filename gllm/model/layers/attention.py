@@ -204,6 +204,9 @@ class Attention(BaseModule):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         q, k, v, p, cos_pos, sin_pos = self._cache
         
+        # TODO: Convert q, k and v shapes from (B, T, H, D) to (B, H, T, D).
+        # Repeat k and v # heads to match q.
+        
         # Backpropagation logic:
         # dL/dx = dL/dy * dy/dO * [dO/dP * [dP/dQ * dQ/dx + dP/dK * dK/dx] + dO/dV * dV/dx]
     
