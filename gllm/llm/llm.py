@@ -6,7 +6,7 @@ import torch
 from tokenizers import Tokenizer
 from torch.profiler import record_function
 
-from gllm.config.generator_params import GeneratorParams
+from gllm.config.generator_config import GeneratorConfig
 from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.model import HuggingFaceModel, Model
 from gllm.sample.logprobs import TokenLogProbs
@@ -20,7 +20,7 @@ class LLM:
     def __init__(
         self,
         hf_model: HuggingFaceModel,
-        gen_params: GeneratorParams,
+        gen_config: GeneratorConfig,
         device: str,
         local_cache_dir: str | None = None,
     ):
@@ -28,25 +28,25 @@ class LLM:
         
         self.model = Model(
             hf_model=hf_model,
-            gen_params=gen_params,
+            gen_config=gen_config,
             device=device,
             local_cache_dir=local_cache_dir,
         )
         self.sampler = Sampler(
-            max_batch_size=gen_params.max_batch_size,
+            max_batch_size=gen_config.max_batch_size,
             device=device,
         )
-        self.gen_params = gen_params
+        self.gen_config = gen_config
         self.device = device
         
-        max_batch_size = gen_params.max_batch_size
-        max_seq_len = gen_params.max_seq_len
+        max_batch_size = gen_config.max_batch_size
+        max_seq_len = gen_config.max_seq_len
         max_num_blocks=self.model.paged_kv_cache.num_required_blocks(max_seq_len)
         
         # [T_max]
         self.arange = torch.arange(max_seq_len, device=device)
         # [block_size]
-        self.block_offsets = torch.arange(self.gen_params.block_size, device=device)
+        self.block_offsets = torch.arange(self.gen_config.block_size, device=device)
         
         # [B_max, T_max]
         self.token_ids = torch.empty(
@@ -117,12 +117,12 @@ class LLM:
     
     @property
     def max_batch_size(self) -> int:
-        return self.gen_params.max_batch_size
+        return self.gen_config.max_batch_size
     
     
     @property
     def max_seq_len(self) -> int:
-        return self.gen_params.max_seq_len
+        return self.gen_config.max_seq_len
         
         
     def _split_request_indices(
@@ -156,7 +156,7 @@ class LLM:
         top_p = self.top_p
         max_num_logprobs = self.max_num_logprobs
         paged_kv_cache = self.model.paged_kv_cache
-        block_size = self.gen_params.block_size
+        block_size = self.gen_config.block_size
         
         ongoing_req_idxs, new_req_idxs, finished_req_idxs = self._split_request_indices(reqs)
             

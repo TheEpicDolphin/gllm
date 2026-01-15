@@ -3,7 +3,7 @@ import uuid
 import queue
 from dataclasses import dataclass
 
-from gllm.config.generator_params import GeneratorParams
+from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, LLMEngineBase, TokenLogProbs
 from gllm.llm.llm import LLM
 from gllm.model.model import HuggingFaceModel
@@ -14,14 +14,14 @@ class LLMEngine(LLMEngineBase):
     def __init__(
         self,
         hf_model: HuggingFaceModel,
-        gen_params: GeneratorParams,
+        gen_config: GeneratorConfig,
         device: str,
         local_cache_dir: str | None = None,
     ):
         self.alive = False
         self.llm = LLM(
             hf_model=hf_model,
-            gen_params=gen_params,
+            gen_config=gen_config,
             device=device,
             local_cache_dir=local_cache_dir,
         )

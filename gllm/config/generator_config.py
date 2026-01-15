@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 
 @dataclass
-class GeneratorParams:
+class GeneratorConfig:
     block_size: int
     max_batch_size: int
     max_seq_len: int

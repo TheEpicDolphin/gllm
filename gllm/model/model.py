@@ -9,7 +9,7 @@ from safetensors.torch import load_file
 from tokenizers import Tokenizer
 from torch.profiler import record_function
 
-from gllm.config.generator_params import GeneratorParams
+from gllm.config.generator_config import GeneratorConfig
 from gllm.config.model_config import ModelConfig
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.layers.attention import AttentionMetadata
@@ -31,7 +31,7 @@ class Model(BaseModule):
     def __init__(
         self,
         hf_model: HuggingFaceModel,
-        gen_params: GeneratorParams,
+        gen_config: GeneratorConfig,
         device: str,
         local_cache_dir: str | None = None,
     ):
@@ -41,7 +41,7 @@ class Model(BaseModule):
             # Use default cache directory.
             local_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "gllm")
             
-        self.gen_params = gen_params
+        self.gen_config = gen_config
         self.device = torch.device(device)
         
         # Create directories for model and tokenizer files.
@@ -66,7 +66,7 @@ class Model(BaseModule):
         with open(local_config_path, "r") as f:
             config = json.load(f)
         self.model_config = ModelConfig(
-            dtype=getattr(torch, gen_params.model_dtype or config["torch_dtype"]),
+            dtype=getattr(torch, gen_config.model_dtype or config["torch_dtype"]),
             hidden_size=config["hidden_size"],
             head_dim=config["head_dim"],
             intermediate_size=config["intermediate_size"],
@@ -76,7 +76,7 @@ class Model(BaseModule):
             num_kv_heads=config["num_key_value_heads"],
             rms_norm_eps=config["rms_norm_eps"],
             eos_token_ids=self.parse_eos_token_ids(config),
-            kv_dtype=getattr(torch, gen_params.kv_dtype or config["torch_dtype"]),
+            kv_dtype=getattr(torch, gen_config.kv_dtype or config["torch_dtype"]),
             rope_theta=config["rope_theta"],
         )
         
@@ -93,7 +93,7 @@ class Model(BaseModule):
         # Initialize paged KV cache.
         self.paged_kv_cache = PagedKVCache(
             model_config=self.model_config,
-            gen_params=gen_params,
+            gen_config=gen_config,
             device=device,
         )
 
@@ -123,7 +123,7 @@ class Model(BaseModule):
         
         # Construct RoPE sin/cos caches for positions up to T_max.
         # [T_max]
-        p = torch.arange(gen_params.max_seq_len, device=device)
+        p = torch.arange(gen_config.max_seq_len, device=device)
         # [head_dim // 2]
         m = torch.arange(self.head_dim // 2, device=device)
         theta_m = self.rope_theta**(-2 * m / self.head_dim)
@@ -151,7 +151,7 @@ class Model(BaseModule):
         
     @property
     def cpu_offloading(self) -> bool:
-        return self.device != "cpu" and self.gen_params.cpu_offloading
+        return self.device != "cpu" and self.gen_config.cpu_offloading
 
     @property
     def eos_token_ids(self) -> list[int]:

@@ -3,7 +3,7 @@ import math
 import pytest
 
 from gllm.engine.hf_llm_engine import HuggingFaceLLMEngine
-from gllm.engine.llm_engine import GenerationRequest, GeneratorParams, LLMEngine
+from gllm.engine.llm_engine import GenerationRequest, GeneratorConfig, LLMEngine
 from gllm.model.model import HuggingFaceModel
 
 
@@ -38,7 +38,7 @@ from gllm.model.model import HuggingFaceModel
 async def test_individual_generation_correctness(prompt: str):
     model = HuggingFaceModel.LLAMA_3_2_1B_INSTUCT
     device = "cpu"
-    gen_params = GeneratorParams(
+    gen_config = GeneratorConfig(
         block_size=16,
         max_batch_size=8,
         max_seq_len=256,
@@ -56,7 +56,7 @@ async def test_individual_generation_correctness(prompt: str):
     # Generate using gllm engine.
     llm_engine = LLMEngine(
         hf_model=model,
-        gen_params=gen_params,
+        gen_config=gen_config,
         device=device,
     )
     actual = llm_engine.generate([request])[0]
@@ -65,7 +65,7 @@ async def test_individual_generation_correctness(prompt: str):
     # Generate using huggingface transformers engine.
     hf_llm_engine = HuggingFaceLLMEngine(
         hf_model=model,
-        gen_params=gen_params,
+        gen_config=gen_config,
         device=device
     )
     expected = hf_llm_engine.generate([request])[0]
@@ -91,7 +91,7 @@ async def test_individual_generation_correctness(prompt: str):
 async def test_batched_generation_correctness(prompts: list[str]):  
     model = HuggingFaceModel.LLAMA_3_2_1B_INSTUCT
     device = "cpu"
-    gen_params = GeneratorParams(
+    gen_config = GeneratorConfig(
         block_size=16,
         max_batch_size=8,
         max_seq_len=256,
@@ -116,7 +116,7 @@ async def test_batched_generation_correctness(prompts: list[str]):
     # Create LLM engine.
     llm_engine = LLMEngine(
         hf_model=model,
-        gen_params=gen_params,
+        gen_config=gen_config,
         device=device,
     )
     # Generate in batch.

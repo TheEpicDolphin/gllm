@@ -1,5 +1,6 @@
 import argparse
 
+from gllm.config.generator_config import GeneratorConfig
 from gllm.model.model import Model
 from gllm.training.cross_entropy_loss import CrossEntropyLoss
 from gllm.training.sgd import SGD
@@ -43,7 +44,9 @@ class Trainer:
                 
                 # Calculate token positions.
                 B, _ = batched_token_ids_tensor.shape
+                # [T]
                 positions = torch.arange(max_seq_len, device=model.device)
+                # [B, T]
                 positions = positions.unsqueeze(0).expand(B, -1)
                 
                 # Calculate causal attention bias.
@@ -118,7 +121,11 @@ def main():
     # Create model.
     model = Model(
         hf_model=args.model,
-        gen_params=,
+        gen_config=GeneratorConfig(
+            block_size=16,
+            max_batch_size=8,
+            max_seq_len=256,
+        ),
         device=args.device,
     )
     
