@@ -1,4 +1,3 @@
-import asyncio
 import math
 import pytest
 
@@ -8,7 +7,6 @@ from gllm.ops.attention.flash_attention import flash_attention
 from gllm.ops.attention.reference_attention import reference_attention
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("B, T_q, T, H_q, H_kv, D", [
     (
         1, 8, 8, 1, 1, 128
@@ -32,7 +30,7 @@ from gllm.ops.attention.reference_attention import reference_attention
         8, 32, 256, 1, 1, 128
     ),
 ])
-async def test_flash_attention_correctness(
+def test_flash_attention_correctness(
     B: int,
     T_q: int,
     T: int,

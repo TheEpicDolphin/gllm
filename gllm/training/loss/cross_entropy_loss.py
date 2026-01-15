@@ -37,7 +37,7 @@ class CrossEntropyLoss:
             # Ignore prompt tokens during loss calculation.
             loss = loss[completion_mask.view(-1)]
         
-        return torch.mean(completion_loss)
+        return torch.mean(loss)
         
 
     def backward(self) -> torch.Tensor:

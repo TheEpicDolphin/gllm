@@ -236,6 +236,7 @@ class Model(BaseModule):
     def _backward_impl(
         self,
         dL_dy: torch.Tensor,
+        weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # l = W_e @ h_n
         dL_dh_n = self.unembed.backward(dL_dy)

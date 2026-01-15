@@ -1,8 +1,9 @@
 import argparse
 
+from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.model import Model
-from gllm.training.cross_entropy_loss import CrossEntropyLoss
-from gllm.training.sgd import SGD
+from gllm.training.loss.cross_entropy_loss import CrossEntropyLoss
+from gllm.training.optimizers.sgd import SGD
 from gllm.training.data_loader.data_loader import DataLoader
 from gllm.training.data_loader.jsonl_dataset import JSONLDataset
 

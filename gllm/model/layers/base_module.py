@@ -46,7 +46,7 @@ class BaseModule:
     
     def parameters(self) -> Iterable[Parameter]:
         if self._parameter is not None:
-            yield _parameter
+            yield self._parameter
         for module in self.child_modules:
             yield from module.parameters()
     
