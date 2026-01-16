@@ -124,7 +124,5 @@ def test_model_backward_correctness(
         # Compare approximate numerical gradient with actual gradient from backward pass.
         abs_err = abs(numerical_grad - actual_grad)
         rel_err = abs_err / abs(numerical_grad)
-        print(f"\nnumerical_grad: {numerical_grad}, actual_grad: {actual_grad}")
-        print(f"abs: {abs_err}, rel: {rel_err}")
-        assert abs_err < 1e-4 and rel_err < 1e-4
+        assert abs_err < 2e-08 and rel_err < 2e-06
     

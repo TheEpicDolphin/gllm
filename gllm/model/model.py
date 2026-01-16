@@ -189,7 +189,7 @@ class Model(BaseModule):
         kv_cache: PagedKVCache | None = None,
     ) -> torch.Tensor:    
         # Get RoPE rotation matrix for each position.
-        # [B, T_q, head_dim // 2, 2, 2]
+        # [B, T_q, head_dim // 2]
         cos_pos = self.cos_pos_cache[attention_metadata.positions]
         sin_pos = self.sin_pos_cache[attention_metadata.positions]
         

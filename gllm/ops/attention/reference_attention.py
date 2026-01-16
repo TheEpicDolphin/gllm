@@ -64,8 +64,6 @@ def reference_attention_bwd(
     v: torch.Tensor,
     # [B, num_q_heads, T, T]
     p: torch.Tensor,
-    # [B, T, T]
-    bias: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     B, T_q, num_q_heads, head_dim = q.shape
     _, T, num_kv_heads, _ = k.shape
@@ -90,11 +88,16 @@ def reference_attention_bwd(
     # P = softmax(S)
     #
     # Theory:
-    # dp_i/ds_j = (i == j) * softmax(s) - e^s_i * e^s_j / sum(e^s)^2
-    # dp/ds = [ dy_1/dx_1   dy_2/dx_1   ... dy_N/dx_1 ]
-    #         [ dy_1/dx_2   dy_2/dx_2   ... dy_N/dx_2 ]
+    # dL/ds_i = dL/dp_1 * dp_1/ds_i + dL/dp_2 * dp_2/ds_i + ... + dL/dp_N * dp_N/ds_i
+    # If j != i
+    #       dp_j/ds_i = -e^s_i * e^s_j / sum(e^s)^2
+    # Else j == i
+    #       dp_j/ds_i = e^s_i / sum(e^s) - e^s_i * e^s_j / sum(e^s)^2
+    #
+    # dp/ds = [ dp_1/ds_1   dp_2/ds_1   ... dp_N/ds_1 ]
+    #         [ dp_1/ds_2   dp_2/ds_2   ... dp_N/ds_2 ]
     #         [                 . . .                 ]
-    #         [ dy_1/dx_N   dy_2/dx_N   ... dy_N/dx_N ]
+    #         [ dp_1/dx_N   dp_2/dx_N   ... dp_N/dx_N ]
     # dp/ds @ dL/dp = [ dL/dp_1 * dp_1/ds_1 + dL/dp_2 * dp_2/ds_1 + ... + dL/dp_N * dp_N/ds_1 ]
     #                 [ dL/dp_1 * dp_1/ds_2 + dL/dp_2 * dp_2/ds_2 + ... + dL/dp_N * dp_N/ds_2 ]
     #                 [                                 . . .                                 ]
@@ -117,7 +120,7 @@ def reference_attention_bwd(
     
     if num_groups > 1:
         # MQA, which means we repeated KV heads during forward pass. During backward
-        # pass, we must sum the contributions of the repeated heads.
+        # pass, the contributions of the repeated heads must be summed.
         dL_dk = torch.sum(dL_dk.reshape(B, -1, num_kv_heads, num_groups, head_dim), dim=-2)
         dL_dv = torch.sum(dL_dv.reshape(B, -1, num_kv_heads, num_groups, head_dim), dim=-2)
     return dL_dq, dL_dk, dL_dv

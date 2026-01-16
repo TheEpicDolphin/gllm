@@ -49,7 +49,7 @@ class RMSNorm(BaseModule):
         # If j != i
         #       dy_j/dx_i = -x_i * x_j * w_i / (N * RMS(x)^3)
         # Else j == i
-        #       dy_i/dx_i = w_i / RMS(x) - x_i * x_j * w_i / (N * RMS(x)^3)
+        #       dy_j/dx_i = w_i / RMS(x) - x_i * x_j * w_i / (N * RMS(x)^3)
         #
         # dy/dx = [ dy_1/dx_1   dy_2/dx_1   ... dy_N/dx_1 ]
         #         [ dy_1/dx_2   dy_2/dx_2   ... dy_N/dx_2 ]

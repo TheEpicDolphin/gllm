@@ -76,54 +76,51 @@ class Attention(BaseModule):
     
     def rope_forward(
         self,
-        # [B, T_q, num_heads, head_dim]
+        # [B, T, num_heads, head_dim]
         x: torch.Tensor,
-        # [B, T_q, head_dim // 2]
+        # [B, T, head_dim // 2]
         cos_pos: torch.Tensor,
-        # [B, T_q, head_dim // 2]
+        # [B, T, head_dim // 2]
         sin_pos: torch.Tensor,
     ) -> torch.Tensor:
-        B, T_q, num_heads, _ = x.shape
-        
+        B, T, num_heads, head_dim = x.shape
+
         # Theory:
         # y = R @ x
-        # [  y_i  ] = [ cos(theta), -sin(theta) ] @ [  x_i  ]
-        # [ y_i+1 ]   [ sin(theta),  cos(theta) ]   [ x_i+1 ]
-        
-        # [B, T_q, num_heads, 2, head_dim // 2]
-        x = x.view(B, T_q, num_heads, 2, -1)
-        
-        # [B, T_q, num_heads, head_dim // 2]
-        x_even, x_odd = x.unbind(dim=3)
-        
-        # [B, T_q, 1, head_dim // 2]
+        # [   y_i   ] = [ cos(theta), -sin(theta) ] @ [   x_i   ]
+        # [ y_i+d/2 ]   [ sin(theta),  cos(theta) ]   [ x_i+d/2 ]
+
+        # [B, T, num_heads, head_dim // 2]
+        x_half1 = x[:, :, :, :head_dim // 2]
+        x_half2 = x[:, :, :, head_dim // 2:]
+
+        # [B, T, 1, head_dim // 2]
         cos_pos = cos_pos.unsqueeze(2)
         sin_pos = sin_pos.unsqueeze(2)
+        
+        # [B, T, num_heads, head_dim // 2]
+        y_half1 = x_half1 * cos_pos - x_half2 * sin_pos
+        # [B, T, num_heads, head_dim // 2]
+        y_half2 = x_half1 * sin_pos + x_half2 * cos_pos
 
         # Apply rotations.
-        x_r = torch.stack(
-            [
-                x_even * cos_pos - x_odd * sin_pos,
-                x_even * sin_pos + x_odd * cos_pos,
-            ],
-            dim=3,
-        ).view(B, T_q, num_heads, -1)
+        x_r = torch.cat((y_half1, y_half2), dim=-1).view(B, T, num_heads, -1)
         return x_r
         
         
     def rope_backward(
         self,
-        # [B, T_q, num_heads, head_dim]
+        # [B, T, num_heads, head_dim]
         dL_dy: torch.Tensor,
-        # [B, T_q, head_dim // 2]
+        # [B, T, head_dim // 2]
         cos_pos: torch.Tensor,
-        # [B, T_q, head_dim // 2]
+        # [B, T, head_dim // 2]
         sin_pos: torch.Tensor,
     ):
         # y = R @ x
         # dL_dx = R^T @ dL_dy
         # R^T is just R, but with sin(theta) negated.
-        dL_dx = self.rope_forward(dL_dy.contiguous(), cos_pos, -sin_pos)
+        dL_dx = self.rope_forward(dL_dy, cos_pos, -sin_pos)
         return dL_dx
         
     
@@ -157,8 +154,8 @@ class Attention(BaseModule):
         v = v.view(B, T_q, self.num_kv_heads, self.head_dim)
         
         # Apply RoPE rotation matrix to q and k.
-        q_r = self.rope_forward(q, cos_pos, sin_pos)
-        k_r = self.rope_forward(k, cos_pos, sin_pos)
+        q = self.rope_forward(q, cos_pos, sin_pos)
+        k = self.rope_forward(k, cos_pos, sin_pos)
         
         if kv_cache is not None:
             # Cache query token K/Vs.
@@ -168,7 +165,7 @@ class Attention(BaseModule):
             # [B * T_q]
             query_slot_mapping = query_slot_mapping.view(-1)
             kv_dtype = kv_cache.dtype
-            kv_cache[0, query_slot_mapping, :, :] = k_r.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+            kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
             kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
             
             # Get sequence K/Vs.
@@ -177,17 +174,14 @@ class Attention(BaseModule):
             # [B * T]
             slot_mapping = slot_mapping.view(-1)
             # [B, T, num_kv_heads, head_dim]
-            k_cache = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(k_r.dtype)
-            v_cache = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(v.dtype)
-        else:
-            k_cache = k_r
-            v_cache = v
+            k = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(k.dtype)
+            v = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(v.dtype)
         
         # Compute attention.
         attn_out, p = reference_attention_fwd(
-            q_r,
-            k_cache,
-            v_cache,
+            q,
+            k,
+            v,
             attention_metadata.bias,
             return_probs=True,
         )
@@ -212,17 +206,15 @@ class Attention(BaseModule):
         # Backpropagation logic:
         # dL/dx = dL/dy * dy/dO * [dO/dP * [dP/dQ * dQ/dx + dP/dK * dK/dx] + dO/dV * dV/dx]
     
-        # y = O @ W_o^T
+        # Output linear projection.
         dL_do = self.linear_o.backward(dL_dy)
         
-        # Attention
+        # Attention.
         # [B, T, num_q_heads, head_dim]
         dL_do = dL_do.view(B, -1, num_q_heads, head_dim)
-        dL_dqr, dL_dkr, dL_dv = reference_attention_bwd(dL_do, q, k, v, p, bias)
+        dL_dqr, dL_dkr, dL_dv = reference_attention_bwd(dL_do, q, k, v, p)
         
-        # RoPE
-        # TODO: Investigate RoPE backward pass, it seems to be causing
-        # errors.
+        # RoPE.
         dL_dq = self.rope_backward(dL_dqr, cos_pos, sin_pos)
         dL_dk = self.rope_backward(dL_dkr, cos_pos, sin_pos)
         
