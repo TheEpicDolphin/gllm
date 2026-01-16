@@ -41,6 +41,6 @@ class Linear(BaseModule):
         # dL/dw_ij = dL/dy_1j * dy_1j/dw_ij + dL/dy_2j * dy_2j/dw_ij + ... + dL/dy_Mj * dy_Mj/dw_ij
         #          = dL/dy_1j * x_1j + dL/dy_2j * x_2j + ... + dL/dy_Nj * x_Mj
         # Which is equivalent to:
-        # dL/dW = dL/dy @ x
+        # dL/dW = (dL/dy)^T @ x
         dL_dw = dL_dy.transpose(-1, -2) @ x
         return dL_dx, dL_dw

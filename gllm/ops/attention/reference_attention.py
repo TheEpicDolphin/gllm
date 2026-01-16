@@ -31,35 +31,41 @@ def reference_attention_fwd(
         v = torch.repeat_interleave(v, num_groups, dim=-2)
     
     # Swap sequence and heads ordering for forward attention.
-    # [B, num_heads, T_q, head_dim]
+    # [B, num_q_heads, T_q, head_dim]
     q = q.transpose(1, 2)
-    # [B, num_heads, T, head_dim]
+    # [B, num_q_heads, T, head_dim]
     k = k.transpose(1, 2)
     v = v.transpose(1, 2)
 
     # Compute attention scores: Q @ K^T / sqrt(d).
-    # [B, num_heads, T_q, T]
+    # [B, num_q_heads, T_q, T]
     scale = 1.0 / head_dim**0.5
     S = torch.matmul(q, k.transpose(-2, -1)) * scale
     # Apply attention bias.
     S += bias.unsqueeze(1)
     # Compute probabilities.
-    # [B, num_heads, T_q, T]
+    # [B, num_q_heads, T_q, T]
     P = F.softmax(S, dim=-1)
     # Scale values by probabilities.
-    # [B, num_heads, T_q, head_dim]
+    # [B, num_q_heads, T_q, head_dim]
     attn_out = torch.matmul(P, v)
-    # [B, T_q, num_heads, head_dim]
+    # [B, T_q, num_q_heads, head_dim]
     attn_out = attn_out.transpose(1, 2).contiguous()
     return (attn_out, P) if return_probs else attn_out
 
 
 def reference_attention_bwd(
     dL_dy: torch.Tensor,
+    # [B, T, num_q_heads, head_dim]
     q: torch.Tensor,
+    # [B, T, num_kv_heads, head_dim]
     k: torch.Tensor,
+    # [B, T, num_kv_heads, head_dim]
     v: torch.Tensor,
+    # [B, num_q_heads, T, T]
     p: torch.Tensor,
+    # [B, T, T]
+    bias: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     B, T_q, num_q_heads, head_dim = q.shape
     _, T, num_kv_heads, _ = k.shape
@@ -101,19 +107,17 @@ def reference_attention_bwd(
     
     # S = Q @ K^T / sqrt(d)
     scale = 1.0 / head_dim**0.5
-    ds_dqr = k * scale
-    dL_dqr = dL_ds @ ds_dqr
-    ds_dkr = q * scale
-    dL_dkr = dL_ds.transpose(-1, -2) @ ds_dkr
+    dL_dq = dL_ds @ k * scale
+    dL_dk = dL_ds.transpose(-1, -2) @ q * scale
     
     # Swap sequence and head dimensions back.
-    dL_dqr = dL_dqr.transpose(1, 2)
-    dL_dkr = dL_dkr.transpose(1, 2)
+    dL_dq = dL_dq.transpose(1, 2)
+    dL_dk = dL_dk.transpose(1, 2)
     dL_dv = dL_dv.transpose(1, 2)
     
     if num_groups > 1:
         # MQA, which means we repeated KV heads during forward pass. During backward
         # pass, we must sum the contributions of the repeated heads.
-        dL_dkr = torch.sum(dL_dkr.reshape(B, -1, num_kv_heads, num_groups, head_dim), dim=-2)
+        dL_dk = torch.sum(dL_dk.reshape(B, -1, num_kv_heads, num_groups, head_dim), dim=-2)
         dL_dv = torch.sum(dL_dv.reshape(B, -1, num_kv_heads, num_groups, head_dim), dim=-2)
-    return dL_dqr, dL_dkr, dL_dv
+    return dL_dq, dL_dk, dL_dv

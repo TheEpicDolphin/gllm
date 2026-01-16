@@ -87,8 +87,8 @@ class Attention(BaseModule):
         
         # Theory:
         # y = R @ x
-        # [  x'_i  ] = [ cos(theta), -sin(theta) ] @ [  x_i  ]
-        # [ x'_i+1 ]   [ sin(theta),  cos(theta) ]   [ x_i+1 ]
+        # [  y_i  ] = [ cos(theta), -sin(theta) ] @ [  x_i  ]
+        # [ y_i+1 ]   [ sin(theta),  cos(theta) ]   [ x_i+1 ]
         
         # [B, T_q, num_heads, 2, head_dim // 2]
         x = x.view(B, T_q, num_heads, 2, -1)
@@ -123,7 +123,7 @@ class Attention(BaseModule):
         # y = R @ x
         # dL_dx = R^T @ dL_dy
         # R^T is just R, but with sin(theta) negated.
-        dL_dx = self.rope_forward(dL_dy, cos_pos, -sin_pos)
+        dL_dx = self.rope_forward(dL_dy.contiguous(), cos_pos, -sin_pos)
         return dL_dx
         
     
@@ -218,9 +218,11 @@ class Attention(BaseModule):
         # Attention
         # [B, T, num_q_heads, head_dim]
         dL_do = dL_do.view(B, -1, num_q_heads, head_dim)
-        dL_dqr, dL_dkr, dL_dv = reference_attention_bwd(dL_do, q, k, v, p)
+        dL_dqr, dL_dkr, dL_dv = reference_attention_bwd(dL_do, q, k, v, p, bias)
         
         # RoPE
+        # TODO: Investigate RoPE backward pass, it seems to be causing
+        # errors.
         dL_dq = self.rope_backward(dL_dqr, cos_pos, sin_pos)
         dL_dk = self.rope_backward(dL_dkr, cos_pos, sin_pos)
         
