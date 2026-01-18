@@ -1,4 +1,4 @@
-# --- Python ---
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -18,7 +18,7 @@ __pycache__/
 # setuptools / pip
 pip-wheel-metadata/
 
-# --- Testing / Coverage ---
+# Testing / Coverage
 .coverage*
 .cache
 pytest_cache/
@@ -26,7 +26,7 @@ htmlcov/
 .tox/
 .nox/
 
-# --- Tooling ---
+# Tooling
 .mypy_cache/
 .pyre/
 .pytype/
@@ -34,6 +34,7 @@ ruff_cache/
 pylint-report.txt
 pylint.log
 
-# --- Data ---
+# Data
 traces/
 datasets/
+models/

@@ -4,7 +4,6 @@ import pytest
 
 from gllm.engine.hf_llm_engine import HuggingFaceLLMEngine
 from gllm.engine.llm_engine import GenerationRequest, GeneratorConfig, LLMEngine
-from gllm.model.model import HuggingFaceModel
 
 
 @pytest.mark.asyncio
@@ -36,7 +35,7 @@ from gllm.model.model import HuggingFaceModel
     # "Describe a futuristic city in 3 sentences.",
 ])
 async def test_individual_generation_correctness(prompt: str):
-    model = HuggingFaceModel.LLAMA_3_2_1B_INSTUCT
+    model_path = "meta-llama/Llama-3.2-1B-Instruct"
     device = "cpu"
     gen_config = GeneratorConfig(
         block_size=16,
@@ -55,7 +54,7 @@ async def test_individual_generation_correctness(prompt: str):
     
     # Generate using gllm engine.
     llm_engine = LLMEngine(
-        hf_model=model,
+        model_path=model_path,
         gen_config=gen_config,
         device=device,
     )
@@ -64,7 +63,7 @@ async def test_individual_generation_correctness(prompt: str):
     
     # Generate using huggingface transformers engine.
     hf_llm_engine = HuggingFaceLLMEngine(
-        hf_model=model,
+        model_path=model_path,
         gen_config=gen_config,
         device=device
     )
@@ -89,7 +88,7 @@ async def test_individual_generation_correctness(prompt: str):
     ],
 ])
 async def test_batched_generation_correctness(prompts: list[str]):  
-    model = HuggingFaceModel.LLAMA_3_2_1B_INSTUCT
+    model_path = "meta-llama/Llama-3.2-1B-Instruct"
     device = "cpu"
     gen_config = GeneratorConfig(
         block_size=16,
@@ -115,7 +114,7 @@ async def test_batched_generation_correctness(prompts: list[str]):
     
     # Create LLM engine.
     llm_engine = LLMEngine(
-        hf_model=model,
+        model_path=model_path,
         gen_config=gen_config,
         device=device,
     )

@@ -3,20 +3,19 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.llm_engine_base import GenerationResult, GenerationRequest, LLMEngineBase
-from gllm.model.model import HuggingFaceModel
 
 
 class HuggingFaceLLMEngine(LLMEngineBase):
     def __init__(
         self,
-        hf_model: HuggingFaceModel,
+        model_path: str,
         gen_config: GeneratorConfig,
         device: str,
     ):
-        self.tokenizer = AutoTokenizer.from_pretrained(hf_model)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(hf_model)
+        self.model = AutoModelForCausalLM.from_pretrained(model_path)
         self.model.to(device)
             
     

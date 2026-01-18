@@ -6,24 +6,22 @@ from dataclasses import dataclass
 from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, LLMEngineBase, TokenLogProbs
 from gllm.llm.llm import LLM
-from gllm.model.model import HuggingFaceModel
 from gllm.scheduler.request_state import RequestState
 
 
 class LLMEngine(LLMEngineBase):
     def __init__(
         self,
-        hf_model: HuggingFaceModel,
+        model_path: str,
         gen_config: GeneratorConfig,
         device: str,
         local_cache_dir: str | None = None,
     ):
         self.alive = False
         self.llm = LLM(
-            hf_model=hf_model,
+            model_path=model_path,
             gen_config=gen_config,
             device=device,
-            local_cache_dir=local_cache_dir,
         )
         self.request_queue = queue.Queue()
         

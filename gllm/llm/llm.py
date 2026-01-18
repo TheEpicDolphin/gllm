@@ -9,7 +9,7 @@ from torch.profiler import record_function
 from gllm.config.generator_config import GeneratorConfig
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.layers.attention import AttentionMetadata
-from gllm.model.model import HuggingFaceModel, Model
+from gllm.model.model import Model
 from gllm.sample.logprobs import TokenLogProbs
 from gllm.sample.sampler import Sampler
 from gllm.sample.sampling_metadata import SamplingMetadata
@@ -20,21 +20,19 @@ from gllm.scheduler.request_state import RequestState
 class LLM:
     def __init__(
         self,
-        hf_model: HuggingFaceModel,
+        model_path: str,
         gen_config: GeneratorConfig,
         device: str,
-        local_cache_dir: str | None = None,
     ):
         super().__init__()
         
         self.model = Model(
-            hf_model=hf_model,
+            model_path=model_path,
             max_seq_len=gen_config.max_seq_len,
             device=device,
             dtype=gen_config.model_dtype,
             kv_dtype=gen_config.kv_dtype,
             cpu_offloading=gen_config.cpu_offloading,
-            local_cache_dir=local_cache_dir,
         )
         self.sampler = Sampler(
             max_batch_size=gen_config.max_batch_size,

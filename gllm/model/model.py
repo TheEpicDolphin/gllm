@@ -4,7 +4,6 @@ import os
 import torch
 import torch.nn.functional as F
 from enum import StrEnum
-from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from tokenizers import Tokenizer
 from torch.profiler import record_function
@@ -21,51 +20,40 @@ from gllm.model.layers.transformer_layer import TransformerLayer
 CPU_DEVICE = "cpu"
 
 
-class HuggingFaceModel(StrEnum):
-    LLAMA_3_2_1B = "meta-llama/Llama-3.2-1B"
-    LLAMA_3_2_1B_INSTUCT = "meta-llama/Llama-3.2-1B-Instruct"
-    
-
 class Model(BaseModule):
     def __init__(
         self,
-        hf_model: HuggingFaceModel,
+        model_path: str,
         max_seq_len: int,
         device: str,
         dtype: str | None = None,
         kv_dtype: str | None = None,
         cpu_offloading: bool = False,
-        local_cache_dir: str | None = None,
     ):
         super().__init__(None)
         
-        if local_cache_dir is None:
-            # Use default cache directory.
-            local_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "gllm")
-            
         self.device = torch.device(device)
         self.cpu_offloading = device != "cpu" and cpu_offloading
         
-        # Create directories for model and tokenizer files.
-        model_cache_dir = os.path.join(local_cache_dir, "models")
-        os.makedirs(model_cache_dir, exist_ok=True)
-        tokenizer_cache_dir = os.path.join(local_cache_dir, "tokenizers")
-        os.makedirs(tokenizer_cache_dir, exist_ok=True)
+        if os.path.exists(model_path):
+            # Get local filepaths for tokenizer, config, and weights.
+            tokenizer_filepath = os.path.join(model_path, "tokenizer.json")
+            config_filepath = os.path.join(model_path, "config.json")
+            weights_filepath = os.path.join(model_path, "model.safetensors")
+        else:
+            # Assume model path is a HuggingFace repo id.
+            from huggingface_hub import hf_hub_download
+            
+            # Download files for tokenizer, config, and weights.
+            tokenizer_filepath = hf_hub_download(repo_id=model_path, filename="tokenizer.json")
+            config_filepath = hf_hub_download(repo_id=model_path, filename="config.json")
+            weights_filepath = hf_hub_download(repo_id=model_path, filename="model.safetensors")
+        
+        # Load tokenizer.
+        self.tokenizer = Tokenizer.from_file(tokenizer_filepath)
 
-        # Download tokenizer.
-        local_tokenizer_path = hf_hub_download(
-            repo_id=hf_model,
-            filename="tokenizer.json",
-            cache_dir=tokenizer_cache_dir,
-        )
-        self.tokenizer = Tokenizer.from_file(local_tokenizer_path)
-
-        # Download model config.
-        local_config_path = hf_hub_download(
-            repo_id=hf_model,
-            filename="config.json"
-        )
-        with open(local_config_path, "r") as f:
+        # Load model config.
+        with open(config_filepath, "r") as f:
             config = json.load(f)
         self.config = ModelConfig(
             dtype=getattr(torch, dtype or config["torch_dtype"]),
@@ -83,15 +71,10 @@ class Model(BaseModule):
             vocab_size=config["vocab_size"],
         )
         
-        # Download model safetensors.
-        local_model_path = hf_hub_download(
-            repo_id=hf_model,
-            filename="model.safetensors",
-            cache_dir=model_cache_dir,
-        )
+        # Load model safetensors.
         # If cpu_offloading is true, weights are kept in CPU RAM and loaded to GPU only when needed.
         initial_weights_device = CPU_DEVICE if self.cpu_offloading else device
-        safetensors = load_file(local_model_path, device=initial_weights_device)
+        safetensors = load_file(weights_filepath, device=initial_weights_device)
 
         # Initialize transformer layers.
         self.layers: list[TransformerLayer] = []
@@ -143,7 +126,7 @@ class Model(BaseModule):
             self.final_norm,
             self.unembed,
         ]
-
+        
 
     @property
     def eos_token_ids(self) -> list[int]:

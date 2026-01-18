@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from gllm.model.layers.attention import AttentionMetadata
-from gllm.model.model import Model, HuggingFaceModel
+from gllm.model.model import Model
 from gllm.training.loss.cross_entropy_loss import CrossEntropyLoss
 
 
@@ -22,7 +22,7 @@ def test_model_backward_correctness(
     
     # Create model.
     model = Model(
-        hf_model=HuggingFaceModel.LLAMA_3_2_1B_INSTUCT,
+        model_path="C:\\Users\\giand\\gllm\\models\\meta-llama\\Llama-3.2-1B-Instruct",
         max_seq_len=1024,
         device="cpu",
         dtype="float64",

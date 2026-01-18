@@ -77,7 +77,7 @@ def benchmark(
     )
     
     engine = engine_cls(
-        hf_model=model,
+        model_path=model,
         gen_config=gen_config,
         device=device,
     )
