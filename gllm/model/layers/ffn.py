@@ -8,25 +8,25 @@ from gllm.model.layers.linear import Linear
 class FFN(BaseModule):
     def __init__(
         self,
-        layer_idx: int,
+        id: str,
         model_config: ModelConfig,
         safetensors
     ):
-        super().__init__(None)
+        super().__init__(id, None)
         
-        ffn_prefix = f"model.layers.{layer_idx}.mlp"
         dtype = model_config.dtype
-        
         # [intermediate_size, hidden_size]
-        W_up = safetensors[f"{ffn_prefix}.up_proj.weight"].to(dtype)
+        up_proj_id = f"{id}.up_proj"
+        up_proj_weights = safetensors[f"{up_proj_id}.weight"].to(dtype)
+        self.linear_up = Linear(up_proj_id, up_proj_weights)
         # [intermediate_size, hidden_size]
-        W_gate = safetensors[f"{ffn_prefix}.gate_proj.weight"].to(dtype)
+        gate_proj_id = f"{id}.gate_proj"
+        gate_proj_weights = safetensors[f"{gate_proj_id}.weight"].to(dtype)
+        self.linear_gate = Linear(gate_proj_id, gate_proj_weights)
         # [hidden_size, intermediate_size]
-        W_down = safetensors[f"{ffn_prefix}.down_proj.weight"].to(dtype)
-
-        self.linear_up = Linear(W_up)
-        self.linear_gate = Linear(W_gate)
-        self.linear_down = Linear(W_down)
+        down_proj_id = f"{id}.down_proj"
+        down_proj_weights = safetensors[f"{down_proj_id}.weight"].to(dtype)
+        self.linear_down = Linear(down_proj_id, down_proj_weights)
         
         self.child_modules = [
             self.linear_up,

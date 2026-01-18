@@ -30,7 +30,7 @@ class Model(BaseModule):
         kv_dtype: str | None = None,
         cpu_offloading: bool = False,
     ):
-        super().__init__(None)
+        super().__init__("model", None)
         
         self.device = torch.device(device)
         self.cpu_offloading = device != "cpu" and cpu_offloading
@@ -80,14 +80,16 @@ class Model(BaseModule):
         self.layers: list[TransformerLayer] = []
         for layer_idx in range(self.config.num_layers):
             self.layers.append(TransformerLayer(
-                layer_idx,
+                f"{self._id}.layers.{layer_idx}",
                 model_config=self.config,
                 safetensors=safetensors,
             ))
         
         # Initialize final norm.
-        final_norm_weights = safetensors[f"model.norm.weight"].to(self.dtype)
+        final_norm_id = f"{self._id}.norm"
+        final_norm_weights = safetensors[f"{final_norm_id}.weight"].to(self.dtype)
         self.final_norm = RMSNorm(
+            final_norm_id,
             weights=final_norm_weights,
             eps=self.config.rms_norm_eps
         )
@@ -96,9 +98,10 @@ class Model(BaseModule):
         # ids to get the embedding vectors. It is also used as an LM
         # heead by multiplying with the hidden states to obtain the
         # logits.
-        self.embedding_weights = safetensors["model.embed_tokens.weight"].to(self.dtype)
-        self.embed = Embedding(self.embedding_weights)
-        self.unembed = Linear(self.embedding_weights)
+        embedding_id = f"{self._id}.embed_tokens"
+        self.embedding_weights = safetensors[f"{embedding_id}.weight"].to(self.dtype)
+        self.embed = Embedding(embedding_id, self.embedding_weights)
+        self.unembed = Linear(embedding_id, self.embedding_weights)
         
         # Construct RoPE sin/cos caches for positions up to T_max.
         # [T_max]

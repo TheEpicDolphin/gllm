@@ -7,9 +7,10 @@ from gllm.model.layers.base_module import BaseModule
 class Linear(BaseModule):
     def __init__(
         self,
+        id: str,
         weights: torch.Tensor,
     ):
-        super().__init__(weights)
+        super().__init__(id, weights)
 
 
     def _forward_impl(

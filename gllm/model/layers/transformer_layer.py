@@ -10,26 +10,30 @@ from gllm.model.layers.ffn import FFN
 class TransformerLayer(BaseModule):
     def __init__(
         self,
-        layer_idx: int,
+        id: str,
         model_config: ModelConfig,
         safetensors,
     ):
-        super().__init__(None)
+        super().__init__(id, None)
         
         dtype = model_config.dtype
         # Initialize layer input norm.
-        input_layernorm_weights = safetensors[f"model.layers.{layer_idx}.input_layernorm.weight"].to(dtype=dtype)
+        input_layernorm_id = f"{id}.input_layernorm"
+        input_layernorm_weights = safetensors[f"{input_layernorm_id}.weight"].to(dtype=dtype)
         self.input_norm = RMSNorm(
+            input_layernorm_id,
             weights=input_layernorm_weights,
             eps=model_config.rms_norm_eps
         )
         # Initialize attention.
-        self.attention = Attention(layer_idx, model_config, safetensors)
+        self.attention = Attention(f"{id}.self_attn", model_config, safetensors)
         # Initialize FFN.
-        self.ffn = FFN(layer_idx, model_config, safetensors)
+        self.ffn = FFN(f"{id}.mlp", model_config, safetensors)
         # Initialize post-attention norm.
-        post_attn_norm_weights = safetensors[f"model.layers.{layer_idx}.post_attention_layernorm.weight"].to(dtype=dtype)
+        post_attn_norm_id = f"{id}.post_attention_layernorm"
+        post_attn_norm_weights = safetensors[f"{post_attn_norm_id}.weight"].to(dtype=dtype)
         self.post_attn_norm = RMSNorm(
+            post_attn_norm_id,
             weights=post_attn_norm_weights,
             eps=model_config.rms_norm_eps
         )

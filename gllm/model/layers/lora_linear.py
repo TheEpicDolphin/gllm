@@ -1,17 +1,17 @@
 import torch
-import torch.nn.functional as F
 
-from gllm.model.layers.base_module import BaseModule
+from gllm.model.layers.linear import Linear
 
 
-class LoRaLinear(BaseModule):
+class LoRALinear(Linear):
     def __init__(
         self,
+        id: str,
         weights: torch.Tensor,
         r: int,
         alpha: float,
     ):
-        super().__init__(None)
+        super().__init__(id, weights)
         
         # Initialize low-rank matrices.
         d_out, d_in = weights.shape
@@ -21,15 +21,13 @@ class LoRaLinear(BaseModule):
         A = 0.01 * torch.randn((r, d_in), dtype=weights.dtype, device=weights.device)
         
         self.scale = alpha / r
-        self.linear_W = Linear(weights)
-        self.linear_B = Linear(B)
-        self.linear_A = Linear(A)
+        self.linear_B = Linear(f"{id}.lora_up", B)
+        self.linear_A = Linear(f"{id}.lora_down", A)
         
         # Backbone weights are frozen, no gradient tracking.
-        self.linear_w.requires_grad = False
+        self._parameter.requires_grad = False
         
         self.child_modules = [
-            self.linear_W,
             self.linear_B,
             self.linear_A,
         ]
@@ -44,7 +42,7 @@ class LoRaLinear(BaseModule):
         self.cache_for_backward(x)
         # y = x @ (W + s(B @ A))^T = x(W^T + s(B @ A)^T) = xW^T + s((x @ A^T) @ B^T)
         # We deliberately avoid materializing the BA matrix.
-        h_w = self.linear_W.forward(x)
+        h_w = super().forward(x)
         h_a = self.linear_A.forward(x)
         h_b = self.linear_B.forward(h_a)
         return h_w + self.scale * h_b
@@ -67,7 +65,7 @@ class LoRaLinear(BaseModule):
         dL_dh_a = self.linear_B.backward(dL_dh_b)
         
         # h_w = x @ W^T
-        dL_dx1 = self.linear_W.backward(dL_dh_w)
+        dL_dx1 = super().backward(dL_dh_w)
         # h_a = x @ A^T
         dL_dx2 = self.linear_A.backward(dL_dh_a)
         dL_dx = dL_dx1 + dL_dx2

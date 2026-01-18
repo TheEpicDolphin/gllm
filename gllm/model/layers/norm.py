@@ -5,10 +5,11 @@ from gllm.model.layers.base_module import BaseModule
 class RMSNorm(BaseModule):
     def __init__(
         self,
+        id: str,
         weights: torch.Tensor,
         eps: float,
     ):
-        super().__init__(weights)
+        super().__init__(id, weights)
         self.eps = eps
     
     

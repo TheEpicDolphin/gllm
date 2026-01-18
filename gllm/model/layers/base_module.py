@@ -9,8 +9,10 @@ StagingBuffers = torch.Tensor | list["StagingBuffers"]
 class BaseModule:
     def __init__(
         self,
+        id: str,
         weights: torch.Tensor | None,
     ):
+        self._id = id
         self._parameter: Parameter | None = Parameter(weights) if weights is not None else None
         self._preloaded_weights = None
         self.child_modules: list[BaseModule] = []
@@ -49,6 +51,16 @@ class BaseModule:
         for module in self.child_modules:
             yield from module.parameters()
     
+    
+    def save_tensors(
+        self,
+        weights_dict: dict[str, torch.Tensor]
+    ) -> None:
+        if self._parameter is not None:
+            weights_dict[f"{self._id}.weight"] = self._parameter.weights
+        for module in self.child_modules:
+            module.save_tensors(weights_dict)
+    
         
     def _get_weights(self, device) -> torch.Tensor:
         if self._preloaded_weights is not None:
@@ -74,7 +86,7 @@ class BaseModule:
         staging_buffers: StagingBuffers,
     ):
         if (self._parameter is not None
-            and device != self.self._parameter.weights.device):
+            and device != self._parameter.weights.device):
             staging_buffer = cast(torch.Tensor, staging_buffers)
             self._preloaded_weights = torch.empty_like(self._parameter.weights, device=device)
             # Copy to pinned CPU staging buffer.
