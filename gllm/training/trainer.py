@@ -1,29 +1,33 @@
 import argparse
 
+from safetensors.torch import save_file
+
 from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.model import Model
 from gllm.training.loss.cross_entropy_loss import CrossEntropyLoss
 from gllm.training.optimizers.sgd import SGD
 from gllm.training.data_loader.data_loader import DataLoader
-from gllm.training.data_loader.jsonl_dataset import JSONLDataset
+from gllm.training.data_loader.parquet_dataset import ParquetDataset
 
 
 class Trainer:
-    def post_train(
+    def train(
         model: Model,
-        dataloader: DataLoader,
+        train_data_loader: DataLoader,
+        val_data_loader: DataLoader,
         loss_fn,
         optimizer,
         num_epochs: int,
+        validate_every: int,
+        checkpoint_dir: str,
     ):
         # Enable training.
         model.training = True
         
+        min_val_loss = float("inf")
         for epoch in range(num_epochs):
-            for step, batched_samples in enumerate(dataloader):
-                batched_prompts, batched_completions = zip(*batched_samples)
-                batched_prompt_ids = model.tokenize(batched_prompts)
-                batched_completion_ids = model.tokenize(batched_completions)
+            for step, train_batch in enumerate(train_data_loader):
+                batched_prompt_ids, batched_completion_ids = zip(*train_batch)
                 
                 # Join prompt and completion token ids together.
                 batched_token_ids = []
@@ -82,7 +86,7 @@ class Trainer:
                 # [B, T]
                 target_ids = batched_token_ids_tensor[:, 1:]
                 completion_mask = completion_mask_tensor[:, 1:]
-                loss = loss_fn.forward(
+                train_loss = loss_fn.forward(
                     logits,
                     target_ids,
                     completion_mask,
@@ -95,52 +99,77 @@ class Trainer:
                 # Update weights.
                 optimizer.step()
                 optimizer.zero_grad()
-                
-                if step % 100 == 0:
-                    print(f"epoch {epoch}, step {step}, loss={loss.item()}")
-        
+                    
+                if step % validate_every == 0:
+                    # Validate.
+                    for val_batch in enumerate(val_data_loader):
+                        # TODO.
+                        
+                    print(f"epoch: {epoch}, step: {step}, training loss: {train_loss.item()}, validation loss: {val_loss}")
+                    if val_loss < min_val_loss:
+                        # Lowest validation loss so far. Create checkpoint.
+                        min_val_loss = val_loss
+                        weights_dict = {}
+                        model.save_tensors(weights_dict)
+                        save_file(weights_dict, "model.safetensors")
+                        
         # Disable training.
         model.training = False
+        
+
+def create_dataloader(
+    path: str,
+    batch_size: int,
+    max_num_samples: int
+):
+    # Create training dataloader.
+    training_dataset_path = args.training_dataset_path
+    assert path.exists()
+    ext = path.suffix
+    if ext == '.parquet':
+        dataset = ParquetDataset(
+            path,
+        )
+    else:
+        raise NotImplementedError(f"Dataset extension: {ext} is not currently supported.")
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        max_num_samples=max_num_samples,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, type=str)
-    parser.add_argument("--dataset-path", required=True, type=str)
-    parser.add_argument("--prompt-key", default="prompt", required=False, type=str)
-    parser.add_argument("--completion-key", default="completion", required=False, type=str)
+    parser.add_argument("--training-dataset-path", required=True, type=str)
+    parser.add_argument("--validation-dataset-path", required=True, type=str)
     parser.add_argument("--batch-size", default=1, required=False, type=int)
-    parser.add_argument("--max-num-samples", default=-1, required=False, type=int)
     parser.add_argument("--optimizer", required=True, type=str)
     parser.add_argument("--loss-fn", required=True, type=str)
     parser.add_argument("--num_epochs", required=True, type=int)
+    parser.add_argument("--checkpoint-dir", required=True, type=int)
+    parser.add_argument("--validate_every", default=2000, required=False, type=int)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
-    
-    trainer = Trainer()
-    
+
     # Create model.
     model = Model(
-        hf_model=args.model,
+        model_path=args.model,
         max_seq_len=1024,
         device=args.device,
     )
     
-    # Create dataloader.
-    dataset_path = args.dataset_path
-    assert dataset_path.exists()
-    ext = dataset_path.suffix
-    if ext == '.jsonl':
-        dataset = JSONLDataset(
-            dataset_path,
-            args.prompt_key,
-            args.completion_key,
-        )
-    else:
-        raise NotImplementedError(f"Dataset extension: {ext} is not currently supported.")
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        max_num_samples=args.max_num_samples,
+    # Create training dataloader.
+    train_data_loader = create_data_loader(
+        args.training_dataset_path,
+        args.batch_size,
+    )
+    
+    # Create validation dataloader.
+    val_data_loader = create_dataloader(
+        args.validation_dataset_path,
+        args.batch_size,
     )
     
     # Optimizer.
@@ -158,13 +187,16 @@ def main():
     else:
         raise NotImplementedError(f"Loss function: {args.loss_fn} is not currently supported.")
 
-    # Run post-training loop.
-    trainer.post_train(
+    # Run training loop.
+    trainer = Trainer()
+    trainer.train(
         model,
-        dataloader
+        train_data_loader,
+        val_data_loader,
         optimizer,
         loss_fn,
         args.num_epochs,
+        args.validate_every,
     )
 
 

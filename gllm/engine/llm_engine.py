@@ -15,7 +15,6 @@ class LLMEngine(LLMEngineBase):
         model_path: str,
         gen_config: GeneratorConfig,
         device: str,
-        local_cache_dir: str | None = None,
     ):
         self.alive = False
         self.llm = LLM(

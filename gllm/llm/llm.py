@@ -120,7 +120,7 @@ class LLM:
         
     
     @property
-    def eos_token_ids(self) -> list[int]:
+    def eos_token_ids(self) -> int:
         return self.model.eos_token_ids
     
     
