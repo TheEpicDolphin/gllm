@@ -45,8 +45,7 @@ def main():
                     if (is_valid_knight_move(from_square, to_square)
                         or is_valid_queen_move(from_square, to_square)):
                         move = f"{chess_squares[y1][x1]}{chess_squares[y2][x2]}"
-                        if move not in vocab:
-                            vocab[move] = len(vocab)
+                        vocab[move] = len(vocab)
     # Add pawn promotion moves.
     for f in "abcdefgh":
         for p in "qrbn":
