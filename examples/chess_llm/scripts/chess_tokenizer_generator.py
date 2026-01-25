@@ -32,7 +32,7 @@ def main():
     args = parser.parse_args()
     
     # Build 2D list of all chess squares.
-    chess_squares = [[f"{f}{r}" for r in range(1, NUM_RANKS + 1)] for f in "abcdefgh"]
+    chess_squares = [[f"{f}{r}" for f in "abcdefgh"] for r in range(NUM_RANKS, 0, -1)]
     
     # Construct vocabulary of valid chess moves.
     vocab = {tok:id for id, tok in enumerate(SPECIAL_TOKENS)}
