@@ -22,25 +22,14 @@ class BaseModule:
     
     
     @property
-    def training(self):
-        return self._training
-        
-        
-    @training.setter
-    def training(self, value):
-        self._training = value
-        for module in self.child_modules:
-            module.training = value
-    
-    
-    @property
     def requires_grad(self):
         return self._parameter is not None and self._parameter.requires_grad
     
     
     @requires_grad.setter
     def requires_grad(self, value):
-        self._parameter.requires_grad = value
+        if self._parameter is not None:
+            self._parameter.requires_grad = value
         for module in self.child_modules:
             module.requires_grad = value
     
@@ -50,6 +39,12 @@ class BaseModule:
             yield self._parameter
         for module in self.child_modules:
             yield from module.parameters()
+
+    
+    def modules(self) -> Iterable["BaseModule"]:
+        yield self
+        for module in self.child_modules:
+            yield from module.modules()
     
     
     def save_tensors(

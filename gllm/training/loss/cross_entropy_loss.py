@@ -17,7 +17,7 @@ class CrossEntropyLoss:
         target_ids,
         # [B, T]
         completion_mask: torch.Tensor | None = None,
-    ) -> float:
+    ) -> torch.Tensor:
         self.logits = logits
         self.target_ids = target_ids
         self.completion_mask = completion_mask

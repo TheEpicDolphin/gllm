@@ -1,4 +1,6 @@
 import argparse
+import os
+
 import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
@@ -20,9 +22,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokenizer-file", required=True, type=str)
     parser.add_argument("--input-dataset-file", required=True, type=str)
-    parser.add_argument("--output-dataset-file", required=True, type=str)
+    parser.add_argument("--output-dataset-dir", required=True, type=str)
     args = parser.parse_args()
     
+    output_dataset_file = os.path.join(args.output_dataset_dir, os.path.basename(args.input_dataset_file))
     tokenizer = Tokenizer.from_file(args.tokenizer_file)
     dataset = ds.dataset(args.input_dataset_file, format="parquet")
     scanner = ds.Scanner.from_dataset(
@@ -43,15 +46,16 @@ def main():
             out_results = []
             for moves, result in zip(moves_list, results_list):
                 out_prompt_moves.append([])
-                out_completion_moves.append(tokenizer.encode_tokens(moves, add_special_tokens=True))
-                out_result.append(RESULT_SCORE_MAP[result])
+                token_ids = tokenizer.encode(" ".join(moves), add_special_tokens=True).ids
+                out_completion_moves.append(token_ids)
+                out_results.append(RESULT_SCORE_MAP[result])
 
             # Build arrow arrays.
             out_batch = pa.record_batch(
                 [
                     pa.array(out_prompt_moves),
                     pa.array(out_completion_moves),
-                    pa.array(out_result),
+                    pa.array(out_results),
                 ],
                 names=["Prompt Moves", "Completion Moves", "Result"]
             )
@@ -59,7 +63,7 @@ def main():
             # Initialize writer once (schema is known after first batch).
             if writer is None:
                 writer = pq.ParquetWriter(
-                    args.output_dataset_file,
+                    output_dataset_file,
                     out_batch.schema,
                     compression="zstd",
                     use_dictionary=True

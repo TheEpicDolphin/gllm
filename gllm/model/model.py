@@ -1,9 +1,11 @@
 import json
 import os
 
+from contextlib import contextmanager
+from pyexpat import model
+
 import torch
 import torch.nn.functional as F
-from enum import StrEnum
 from safetensors.torch import load_file
 from tokenizers import Tokenizer
 from torch.profiler import record_function
@@ -96,12 +98,12 @@ class Model(BaseModule):
         
         # Get embedding matrix. This is indexed into using the token
         # ids to get the embedding vectors. It is also used as an LM
-        # heead by multiplying with the hidden states to obtain the
+        # head by multiplying with the hidden states to obtain the
         # logits.
         embedding_id = f"{self._id}.embed_tokens"
         self.embedding_weights = safetensors[f"{embedding_id}.weight"].to(self.dtype)
         self.embed = Embedding(embedding_id, self.embedding_weights)
-        self.unembed = Linear(embedding_id, self.embedding_weights)
+        self.lm_head = Linear(embedding_id, self.embedding_weights)
         
         # Construct RoPE sin/cos caches for positions up to T_max.
         # [T_max]
@@ -127,7 +129,7 @@ class Model(BaseModule):
             self.embed,
             *self.layers,
             self.final_norm,
-            self.unembed,
+            self.lm_head,
         ]
         
 
@@ -164,6 +166,34 @@ class Model(BaseModule):
             return [value]
         else:
             return []
+            
+
+    @contextmanager
+    def training_mode(self):
+        try:
+            for module in self.modules():
+                module.was_training = module._training
+                module._training = True
+            yield
+        finally:
+            for module in self.modules():
+                module._training = module.was_training
+                del module.was_training
+
+            
+    def save(self, dir: str):
+        from safetensors.torch import save_file
+
+        weights_dict = {}
+        self.save_tensors(weights_dict)
+        save_file(weights_dict, os.path.join(dir, "model.safetensors"))
+        
+        
+    def retokenize(self, new_tokenizer):
+        # TODO: Construct a new embedding table by averaging together the
+        # subword embeddings for each token in the new tokenizer's vocabulary.
+        # TODO: Update model config with new vocabulary and bos/pad/eos token ids.
+        self.tokenizer = new_tokenizer
         
 
     def _forward_impl(
@@ -215,7 +245,7 @@ class Model(BaseModule):
         # Unembed. Computes output logits.
         with record_function("model.compute_logits"):
             # TODO: Only compute logits for last token hidden state during prefill.
-            logits = self.unembed.forward(h_normed)
+            logits = self.lm_head.forward(h_normed)
         return logits
         
             
@@ -225,7 +255,7 @@ class Model(BaseModule):
         weights: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # l = W_e @ h_n
-        dL_dh_n = self.unembed.backward(dL_dy)
+        dL_dh_n = self.lm_head.backward(dL_dy)
         
         # h_normed = RMSNorm(h)
         dL_dh = self.final_norm.backward(dL_dh_n)
