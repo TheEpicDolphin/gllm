@@ -58,7 +58,6 @@ def test_model_backward_correctness(
             seq_lens=seq_lens,
             bias=bias,
             # No KV caching for training.
-            block_table=None,
             slot_mapping=None,
             query_slot_mapping=None,
         )

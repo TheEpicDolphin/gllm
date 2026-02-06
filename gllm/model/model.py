@@ -187,6 +187,14 @@ class Model(BaseModule):
         weights_dict = {}
         self.save_tensors(weights_dict)
         save_file(weights_dict, os.path.join(dir, "model.safetensors"))
+
+
+    def tokenize(self, tokens: str) -> list[int]:
+        return self.tokenizer.encode(tokens).ids
+
+
+    def detokenize(self, token_ids: list[int]) -> str:
+        return self.tokenizer.decode(token_ids)
         
         
     def retokenize(self, new_tokenizer):

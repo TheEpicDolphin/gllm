@@ -17,8 +17,6 @@ class AttentionMetadata:
     query_lens: torch.Tensor
     # [B]
     seq_lens: torch.Tensor
-    # [B, max_num_blocks]
-    block_table: torch.Tensor
     # [B, T]
     slot_mapping: torch.Tensor
     # [B, T_q]
