@@ -14,9 +14,9 @@ class AttentionMetadata:
     # [B, T_q]
     positions: torch.Tensor
     # [B]
-    query_lens: torch.Tensor
-    # [B]
     seq_lens: torch.Tensor
+    # [B]
+    query_lens: torch.Tensor
     # [B, T]
     slot_mapping: torch.Tensor
     # [B, T_q]

@@ -22,7 +22,7 @@ def test_model_backward_correctness(
     
     # Create model.
     model = Model(
-        model_path="C:\\Users\\giand\\gllm\\models\\meta-llama\\Llama-3.2-1B-Instruct",
+        model_path="meta-llama/Llama-3.2-1B-Instruct",
         max_seq_len=1024,
         device="cpu",
         dtype="float64",

@@ -1,16 +1,17 @@
 import asyncio
-from dataclasses import dataclass
 import uuid
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import torch
 
 from gllm.config.generator_config import GeneratorConfig
+from gllm.engine.batch_inputs import BatchInputs
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, TokenLogProbs
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.model import Model
 from gllm.sample.logprobs import TokenLogProbs
 from gllm.sample.sampling_metadata import SamplingMetadata
-from gllm.scheduler.batch_inputs import BatchInputs
 
 
 @dataclass
@@ -28,23 +29,26 @@ class ScheduledRequest:
     future: asyncio.Future
 
 
-class Scheduler:
+class BaseScheduler(ABC):
     def __init__(
         self,
         model: Model,
-        paged_kv_cache: PagedKVCache,
         gen_config: GeneratorConfig,
         device: str,
     ):
-        super().__init__()
         self.model = model
-        self.paged_kv_cache = paged_kv_cache
         self.gen_config = gen_config
         self.device = device
+
+        self.paged_kv_cache = PagedKVCache(
+            model_config=self.model.config,
+            gen_config=gen_config,
+            device=device,
+        )
         
         self.max_batch_size = gen_config.max_batch_size
         self.max_seq_len = gen_config.max_seq_len
-        max_num_blocks = paged_kv_cache.num_required_blocks(self.max_seq_len)
+        max_num_blocks = self.paged_kv_cache.num_required_blocks(self.max_seq_len)
 
         self.batch_size: int = 0
         self.reqs: list[ScheduledRequest] = [None] * self.max_batch_size
@@ -52,7 +56,7 @@ class Scheduler:
         # [max(B_max, T_max)]
         self.arange = torch.arange(max(self.max_batch_size, self.max_seq_len), device=device)
         # [block_size]
-        self.block_offsets = torch.arange(paged_kv_cache.block_size, device=device)
+        self.block_offsets = torch.arange(self.paged_kv_cache.block_size, device=device)
         
         # [B_max, T_max]
         self.token_ids = torch.empty(
@@ -133,7 +137,7 @@ class Scheduler:
         self,
         reqs: list[GenerationRequest],
         futures: list[asyncio.Future],
-    ) -> tuple[BatchInputs, int]:
+    ) -> tuple[BatchInputs | None, int]:
         prefill_start_idx = self.batch_size
         for req, future in zip(reqs, futures):
             try:
@@ -173,7 +177,7 @@ class Scheduler:
                     max_num_logprobs=req.max_num_logprobs,
                     future=future,
                 )
-                self.batch_size += 1
+                print(f"[LLMEngine] received request '{uid}'.")
 
                 # Process new request.
                 prompt_token_ids_tensor = torch.tensor(prompt_token_ids, device=self.device)
@@ -196,19 +200,27 @@ class Scheduler:
                 self.top_k[idx] = req.top_k
                 self.top_p[idx] = req.top_p
                 self.max_num_logprobs[idx] = req.max_num_logprobs
+
+                self.batch_size += 1
             except Exception as e:
                 future.set_exception(e)
 
         prefill_end_idx = self.batch_size
         B = prefill_end_idx - prefill_start_idx
+        if B == 0:
+            # No new requests were enqueued.
+            return None, prefill_start_idx
+
         seq_lens = self.seq_lens[prefill_start_idx:prefill_end_idx]
         max_seq_len = seq_lens.max()
         num_blocks = self.num_blocks[prefill_start_idx:prefill_end_idx]
         block_table = self.block_table[prefill_start_idx:prefill_end_idx, :num_blocks.max()]
 
         # Create KV cache slot mapping.
-        # [B, max_num_blocks, block_size]
-        slot_mapping = self.paged_kv_cache.block_size * block_table.unsqueeze(2) + self.block_offsets
+        # [B, max_num_blocks * block_size]
+        slot_mapping = (self.paged_kv_cache.block_size * block_table.unsqueeze(2) + self.block_offsets).view(B, -1)
+        # [B, T]
+        slot_mapping = slot_mapping[:, :max_seq_len].contiguous()
 
         # Update sampling metadata.
         sampling_metadata = SamplingMetadata(
@@ -221,13 +233,11 @@ class Scheduler:
         batch = BatchInputs(
             max_seq_len=max_seq_len,
             seq_lens=seq_lens,
-            # During prefill, the entire sequence is the query.
-            max_query_len=max_seq_len,
-            query_lens=seq_lens,
-            token_ids=self.token_ids[prefill_start_idx:prefill_end_idx],
+            token_ids=self.token_ids[prefill_start_idx:prefill_end_idx, :max_seq_len],
             token_positions=self.arange[:max_seq_len].unsqueeze(0).expand(B, -1),
-            slot_mapping=slot_mapping.view(B, -1),
+            slot_mapping=slot_mapping,
             sampling_metadata=sampling_metadata,
+            paged_kv_cache=self.paged_kv_cache,
         )
         return batch, prefill_start_idx
         
@@ -252,8 +262,10 @@ class Scheduler:
         block_table = self.block_table[:B, :num_blocks.max()]
 
         # Create KV cache slot mapping.
-        # [B, max_num_blocks, block_size]
-        slot_mapping = self.paged_kv_cache.block_size * block_table.unsqueeze(2) + self.block_offsets
+        # [B, max_num_blocks * block_size]
+        slot_mapping = (self.paged_kv_cache.block_size * block_table.unsqueeze(2) + self.block_offsets).view(B, -1)
+        # [B, T_q]
+        slot_mapping = slot_mapping[:, :max_seq_len].contiguous()
 
         # Update sampling metadata.
         sampling_metadata = SamplingMetadata(
@@ -262,43 +274,35 @@ class Scheduler:
             top_p=self.top_p[:B],
             max_num_logprobs=self.max_num_logprobs[:B],
         )
-        
+
         return BatchInputs(
             max_seq_len=max_seq_len,
             seq_lens=seq_lens,
-            # For now, assume query length is always 1 during decoding.
-            # This will change when spec decoding is implemented, which
-            # allows for variable length queries during decoding.
-            max_query_len=1,
-            query_lens=torch.ones_like(seq_lens),  
-            token_ids=self.token_ids[:B],
+            token_ids=self.token_ids[:B, :max_seq_len],
             token_positions=self.arange[:max_seq_len].unsqueeze(0).expand(B, -1),
-            slot_mapping=slot_mapping.view(B, -1),
+            slot_mapping=slot_mapping,
             sampling_metadata=sampling_metadata,
+            paged_kv_cache=self.paged_kv_cache,
         )
     
 
     def update(
         self,
+        # [B]
         sampled_token_ids: torch.Tensor,
-        logprobs: list[TokenLogProbs],
+        sampled_logprobs: list[TokenLogProbs],
         req_offset: int = 0,
     ) -> None:
         B = self.batch_size
-        # Update token ids and sequence lengths.
-        batch_idxs = self.arange[req_offset:B]
-        seq_lens = self.seq_lens[req_offset:B]
-        self.token_ids[batch_idxs, seq_lens] = sampled_token_ids
-        seq_lens += 1
-
         # Find and remove finished requests.
         to_req_idxs = []
         for idx in range(req_offset, B):
             req = self.reqs[idx]
-            sampled_token_id = sampled_token_ids[idx - req_offset].item()
-            req.generated_token_ids.append(sampled_token_id)
-            req.generated_logprobs.append(logprobs[idx - req_offset])
-            if sampled_token_id in req.stop_token_ids \
+            token_id = sampled_token_ids[idx - req_offset].item()
+            logprobs = sampled_logprobs[idx - req_offset]
+            req.generated_token_ids.append(token_id)
+            req.generated_logprobs.append(logprobs)
+            if token_id in req.stop_token_ids \
                 or len(req.generated_token_ids) >= req.max_new_tokens:
                 # Mark request as finished.
                 self.reqs[idx] = None

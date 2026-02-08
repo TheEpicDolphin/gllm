@@ -4,8 +4,7 @@ import queue
 from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, LLMEngineBase
 from gllm.engine.model_runner import ModelRunner
-from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
-from gllm.scheduler.scheduler import Scheduler
+from gllm.engine.scheduler import Scheduler
 
 
 class LLMEngine(LLMEngineBase):
@@ -21,14 +20,8 @@ class LLMEngine(LLMEngineBase):
             gen_config=gen_config,
             device=device,
         )
-        self.paged_kv_cache = PagedKVCache(
-            model_config=self.runner.model.config,
-            gen_config=gen_config,
-            device=device,
-        )
         self.scheduler = Scheduler(
             model=self.runner.model,
-            paged_kv_cache=self.paged_kv_cache,
             gen_config=gen_config,
             device=device,
         )
@@ -75,11 +68,12 @@ class LLMEngine(LLMEngineBase):
             if len(enqueued_reqs) > 0:
                 # Prefill new requests.
                 prefill_batch, prefill_start = self.scheduler.prepare_prefill_batch(enqueued_reqs, futures)
-                sampled_token_ids, logprobs = self.runner.step(prefill_batch, self.paged_kv_cache)
-                self.scheduler.update(sampled_token_ids, logprobs, req_offset=prefill_start)
+                if prefill_batch is not None:
+                    sampled_token_ids, logprobs = self.runner.prefill_step(prefill_batch)
+                    self.scheduler.update(sampled_token_ids, logprobs, req_offset=prefill_start)
             # Decode step for all requests.
             decode_batch = self.scheduler.prepare_decode_batch()
-            sampled_token_ids, logprobs = self.runner.step(decode_batch, self.paged_kv_cache)
+            sampled_token_ids, logprobs = self.runner.decode_step(decode_batch)
             self.scheduler.update(sampled_token_ids, logprobs)
     
     
@@ -89,16 +83,17 @@ class LLMEngine(LLMEngineBase):
     
     def generate(self, reqs: list[GenerationRequest]) -> list[GenerationResult]:
         from concurrent.futures import Future
-        
-        # Schedule the requests. Some may be rejected.
-        futures = [Future() for _ in reqs]
+
         # Run prefill step.
+        futures = [Future() for _ in reqs]
         prefill_batch, prefill_start = self.scheduler.prepare_prefill_batch(reqs, futures)
-        sampled_token_ids, logprobs = self.runner.step(prefill_batch, self.paged_kv_cache)
-        self.scheduler.update(sampled_token_ids, logprobs, req_offset=prefill_start)
+        if prefill_batch is not None:
+            sampled_token_ids, logprobs = self.runner.prefill_step(prefill_batch)
+            self.scheduler.update(sampled_token_ids, logprobs, req_offset=prefill_start)
+
         # Run decode steps until all requests are finished.
         while self.scheduler.has_active_requests:
             decode_batch = self.scheduler.prepare_decode_batch()
-            sampled_token_ids, logprobs = self.runner.step(decode_batch, self.paged_kv_cache)
+            sampled_token_ids, logprobs = self.runner.decode_step(decode_batch)
             self.scheduler.update(sampled_token_ids, logprobs)
         return [future.result() for future in futures]
