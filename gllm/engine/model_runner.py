@@ -85,7 +85,7 @@ class ModelRunner(BaseModelRunner):
                 logits[batch_idxs, seq_lens - 1],
                 batch.sampling_metadata
             )
-        return sampled_token_ids, logprobs
+        return sampled_token_ids.unsqueeze(-1), logprobs
     
 
     def decode_step(
@@ -149,4 +149,4 @@ class ModelRunner(BaseModelRunner):
                 logits[:, -1],
                 batch.sampling_metadata
             )
-        return sampled_token_ids, logprobs
+        return sampled_token_ids.unsqueeze(-1), logprobs
