@@ -1,6 +1,8 @@
 import asyncio
 import uuid
+
 from abc import ABC, abstractmethod
+from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass, fields
 
 import torch
@@ -8,6 +10,7 @@ import torch
 from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.batch_inputs import BatchInputs
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, TokenLogProbs
+from gllm.engine.utils import complete_future_threadsafe
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.model import Model
 from gllm.sample.logprobs import TokenLogProbs
@@ -62,10 +65,9 @@ class RequestStates:
 @dataclass
 class ScheduledRequest:
     id: int
-    prompt_token_ids: list[int]
-    generated_logprobs: list[TokenLogProbs]
-    stop_token_ids: set[int]
-    future: asyncio.Future
+    gen_req: GenerationRequest
+    gen_logprobs: list[TokenLogProbs]
+    future: asyncio.Future | ConcurrentFuture
 
 
 class BaseScheduler(ABC):
@@ -113,9 +115,9 @@ class BaseScheduler(ABC):
         self.req_state_keys = [f.name for f in fields(self.req_states)]
 
 
-    @property    
-    def has_active_requests(self) -> bool:
-        return self.batch_size > 0
+    @property
+    def num_active_requests(self) -> int:
+        return self.batch_size
     
 
     def _gen_unique_id(self):
@@ -162,9 +164,8 @@ class BaseScheduler(ABC):
                 idx = self.batch_size
                 self.reqs[idx] = ScheduledRequest(
                     id=uid,
-                    prompt_token_ids=prompt_token_ids,
-                    generated_logprobs=[],
-                    stop_token_ids=set(stop_token_ids),
+                    gen_req=req,
+                    gen_logprobs=[],
                     future=future,
                 )
                 print(f"[LLMEngine] received request '{uid}'.")
@@ -196,7 +197,10 @@ class BaseScheduler(ABC):
                 rs.top_p[idx] = req.top_p
                 self.batch_size += 1
             except Exception as e:
-                future.set_exception(e)
+                complete_future_threadsafe(
+                    future,
+                    exception=e
+                )
 
         prefill_end_idx = self.batch_size
         B = prefill_end_idx - prefill_start_idx
@@ -293,11 +297,14 @@ class BaseScheduler(ABC):
         for idx, req in enumerate(finished_reqs):
             generated_token_ids = token_ids[idx, prompt_lens[idx]:seq_lens[idx]].tolist()
             generated_text = self.model.detokenize(generated_token_ids)
-            req.future.set_result(GenerationResult(
-                token_ids=generated_token_ids,
-                logprobs=req.generated_logprobs,
-                text=generated_text,
-            ))
+            complete_future_threadsafe(
+                req.future,
+                GenerationResult(
+                    token_ids=generated_token_ids,
+                    logprobs=req.gen_logprobs,
+                    text=generated_text,
+                )
+            )
             print(f"[LLMEngine] completed request '{req.id}'.")
             # Release KV cache blocks.
             block_ids = block_table[idx, :num_blocks[idx]].tolist()
@@ -352,7 +359,7 @@ class BaseScheduler(ABC):
         for idx in range(B):
             req = self.reqs[req_offset + idx]
             logprobs = sampled_logprobs[idx]
-            req.generated_logprobs.append(logprobs)
+            req.gen_logprobs.append(logprobs)
 
         # Compact the batch by moving over right-most ongoing requests to fill
         # empty slots of left-most finished requests, in that order, until there

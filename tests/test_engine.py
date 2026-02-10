@@ -1,12 +1,14 @@
 import asyncio
 import math
 import pytest
+import threading
+
+from dataclasses import replace
 
 from gllm.engine.hf_llm_engine import HuggingFaceLLMEngine
 from gllm.engine.llm_engine import GenerationRequest, GeneratorConfig, LLMEngine
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("prompt", [
     # Instruction
     "Explain the theory of relativity in simple terms.",
@@ -34,7 +36,7 @@ from gllm.engine.llm_engine import GenerationRequest, GeneratorConfig, LLMEngine
     # "Compose a friendly email to remind someone of a meeting.",
     # "Describe a futuristic city in 3 sentences.",
 ])
-async def test_individual_generation_correctness(prompt: str):
+def test_individual_generation_correctness(prompt: str):
     model_path = "meta-llama/Llama-3.2-1B-Instruct"
     device = "cpu"
     gen_config = GeneratorConfig(
@@ -74,7 +76,6 @@ async def test_individual_generation_correctness(prompt: str):
     assert actual.text == expected.text
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("prompts", [
     [
         "Explain the theory of relativity in simple terms.",
@@ -87,7 +88,7 @@ async def test_individual_generation_correctness(prompt: str):
         "Translate this sentence to Spanish: 'The cat is on the roof.'",
     ],
 ])
-async def test_batched_generation_correctness(prompts: list[str]):  
+def test_batched_generation_correctness(prompts: list[str]):  
     model_path = "meta-llama/Llama-3.2-1B-Instruct"
     device = "cpu"
     gen_config = GeneratorConfig(
@@ -132,3 +133,85 @@ async def test_batched_generation_correctness(prompts: list[str]):
             # Compare tokens for exact equality.
             assert breq_logprobs[1] == ireq_logprobs[1]
         assert batched_result.text == individual_result.text
+
+
+@pytest.mark.asyncio
+async def test_server_generation_correctness():
+    import torch
+    
+    torch.manual_seed(42)
+    num_reqs = 16
+    gen_lens = torch.randint(1, 32, (num_reqs,)).tolist()
+    model_path = "meta-llama/Llama-3.2-1B-Instruct"
+    device = "cpu"
+
+    # Create requests.
+    requests = []
+    for gen_len in gen_lens:
+        requests.append(
+            GenerationRequest(
+                prompt="Explain the theory of relativity in simple terms.",
+                max_new_tokens=gen_len,
+                stop_tokens=[],
+                temperature=0.1,
+                top_k=1,
+                top_p=1.0,
+                max_num_logprobs=1,
+            )
+        )
+
+    gen_config = GeneratorConfig(
+        block_size=16,
+        max_batch_size=num_reqs,
+        max_queue_size=num_reqs,
+        max_seq_len=1024,
+        model_dtype="float32",
+        kv_dtype="float32",
+    )
+
+    # Run a single batched generation. These results are used as
+    # the baseline.
+    print("Running batched generation...")
+    llm_engine = LLMEngine(
+        model_path=model_path,
+        gen_config=gen_config,
+        device=device,
+    )
+    batched_results = llm_engine.generate(requests)
+    del llm_engine
+
+    # Run in server mode. Requests are queued and processed using
+    # continuous batching.
+    print("Running in server mode...")
+    futures = []
+    llm_engine = LLMEngine(
+        model_path=model_path,
+        gen_config=replace(
+            gen_config,
+            # Only allow 4 requests to be processed at a time.
+            # The rest are queued.
+            max_batch_size=4,
+            max_queue_size=num_reqs,
+        ),
+        device=device,
+    )
+    # Start the engine in a separate thread since it runs an infinite loop.
+    t = threading.Thread(target=llm_engine.run, daemon=True)
+    t.start()
+    # Enqueue requests and gather results.
+    futures = [llm_engine.enqueue_request(request) for request in requests]
+    server_results = await asyncio.gather(*futures)
+    print("All server results received.")
+    # Stop the engine and join the thread.
+    llm_engine.stop()
+    t.join()
+    del llm_engine
+
+    # Compare results.
+    for batched_result, server_result in zip(batched_results, server_results):
+        for breq_logprobs, sreq_logprobs in zip(batched_result.logprobs, server_result.logprobs):
+            # Compare logprobs for approximate equality.
+            assert math.isclose(breq_logprobs[0], sreq_logprobs[0], rel_tol=1e-5, abs_tol=1e-5)
+            # Compare tokens for exact equality.
+            assert breq_logprobs[1] == sreq_logprobs[1]
+        assert batched_result.text == server_result.text
