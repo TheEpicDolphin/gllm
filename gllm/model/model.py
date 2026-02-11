@@ -2,10 +2,8 @@ import json
 import os
 
 from contextlib import contextmanager
-from pyexpat import model
 
 import torch
-import torch.nn.functional as F
 from safetensors.torch import load_file
 from tokenizers import Tokenizer
 from torch.profiler import record_function

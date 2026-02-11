@@ -1,10 +1,7 @@
 from abc import ABC, abstractmethod
 
-import torch
-
 from gllm.engine.batch_inputs import BatchInputs
-from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
-from gllm.sample.logprobs import TokenLogProbs
+from gllm.sample.sampler import SamplerOutput
 
 
 class BaseModelRunner(ABC):
@@ -12,7 +9,7 @@ class BaseModelRunner(ABC):
     def prefill_step(
         self,
         batch: BatchInputs,
-    ) -> tuple[torch.Tensor, list[TokenLogProbs]]:
+    ) -> SamplerOutput:
         raise NotImplementedError
 
 
@@ -20,5 +17,5 @@ class BaseModelRunner(ABC):
     def decode_step(
         self,
         batch: BatchInputs,
-    ) -> tuple[torch.Tensor, list[TokenLogProbs]]:
+    ) -> SamplerOutput:
         raise NotImplementedError

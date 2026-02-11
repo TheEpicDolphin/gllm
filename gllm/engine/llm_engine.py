@@ -96,12 +96,12 @@ class LLMEngine(LLMEngineBase):
                 # Prefill new requests.
                 prefill_batch, prefill_start = self.scheduler.prepare_prefill_batch(prefill_reqs, futures)
                 if prefill_batch is not None:
-                    sampled_token_ids, logprobs = self.runner.prefill_step(prefill_batch)
-                    self.scheduler.update(sampled_token_ids, logprobs, req_offset=prefill_start)
+                    sampler_output = self.runner.prefill_step(prefill_batch)
+                    self.scheduler.update(*sampler_output, req_offset=prefill_start)
             # Decode step for all requests.
             decode_batch = self.scheduler.prepare_decode_batch()
-            sampled_token_ids, logprobs = self.runner.decode_step(decode_batch)
-            self.scheduler.update(sampled_token_ids, logprobs)
+            sampler_output = self.runner.decode_step(decode_batch)
+            self.scheduler.update(*sampler_output)
     
     
     def stop(self):
@@ -113,12 +113,12 @@ class LLMEngine(LLMEngineBase):
         futures = [ConcurrentFuture() for _ in reqs]
         prefill_batch, prefill_start = self.scheduler.prepare_prefill_batch(reqs, futures)
         if prefill_batch is not None:
-            sampled_token_ids, logprobs = self.runner.prefill_step(prefill_batch)
-            self.scheduler.update(sampled_token_ids, logprobs, req_offset=prefill_start)
+            sampler_output = self.runner.prefill_step(prefill_batch)
+            self.scheduler.update(*sampler_output, req_offset=prefill_start)
 
         # Run decode steps until all requests are finished.
         while self.scheduler.num_active_requests > 0:
             decode_batch = self.scheduler.prepare_decode_batch()
-            sampled_token_ids, logprobs = self.runner.decode_step(decode_batch)
-            self.scheduler.update(sampled_token_ids, logprobs)
+            sampler_output = self.runner.decode_step(decode_batch)
+            self.scheduler.update(*sampler_output)
         return [future.result() for future in futures]

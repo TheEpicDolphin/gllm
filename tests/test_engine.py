@@ -109,7 +109,7 @@ def test_batched_generation_correctness(prompts: list[str]):
                 temperature=0.1,
                 top_k=1,
                 top_p=1.0,
-                max_num_logprobs=1,
+                num_top_logprobs=1,
             )
         )
     
@@ -127,11 +127,12 @@ def test_batched_generation_correctness(prompts: list[str]):
     
     # Compare results.
     for batched_result, individual_result in zip(batched_results, individual_results):
-        for breq_logprobs, ireq_logprobs in zip(batched_result.logprobs, individual_result.logprobs):
-            # Compare logprobs for approximate equality.
-            assert math.isclose(breq_logprobs[0], ireq_logprobs[0], rel_tol=1e-5, abs_tol=1e-5)
-            # Compare tokens for exact equality.
-            assert breq_logprobs[1] == ireq_logprobs[1]
+        for b_top_logprobs, i_top_logprobs in zip(batched_result.top_logprobs, individual_result.top_logprobs):
+            for b_logprob, b_token_id, i_logprob, i_token_id in zip(*b_top_logprobs, *i_top_logprobs):
+                # Check logprobs for approximate equality.
+                assert math.isclose(b_logprob, i_logprob, rel_tol=1e-5, abs_tol=1e-5)
+                # Check tokens for exact equality.
+                assert b_token_id == i_token_id
         assert batched_result.text == individual_result.text
 
 
@@ -156,7 +157,7 @@ async def test_server_generation_correctness():
                 temperature=0.1,
                 top_k=1,
                 top_p=1.0,
-                max_num_logprobs=1,
+                num_top_logprobs=1,
             )
         )
 
@@ -209,9 +210,10 @@ async def test_server_generation_correctness():
 
     # Compare results.
     for batched_result, server_result in zip(batched_results, server_results):
-        for breq_logprobs, sreq_logprobs in zip(batched_result.logprobs, server_result.logprobs):
-            # Compare logprobs for approximate equality.
-            assert math.isclose(breq_logprobs[0], sreq_logprobs[0], rel_tol=1e-5, abs_tol=1e-5)
-            # Compare tokens for exact equality.
-            assert breq_logprobs[1] == sreq_logprobs[1]
+        for b_top_logprobs, s_top_logprobs in zip(batched_result.top_logprobs, server_result.top_logprobs):
+            for b_logprob, b_token_id, s_logprob, s_token_id in zip(*b_top_logprobs, *s_top_logprobs):
+                # Check logprobs for approximate equality.
+                assert math.isclose(b_logprob, s_logprob, rel_tol=1e-5, abs_tol=1e-5)
+                # Check tokens for exact equality.
+                assert b_token_id == s_token_id
         assert batched_result.text == server_result.text

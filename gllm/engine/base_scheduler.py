@@ -9,15 +9,16 @@ import torch
 
 from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.batch_inputs import BatchInputs
-from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, TokenLogProbs
+from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult
+from gllm.engine.logprobs import TokenLogProbs
 from gllm.engine.utils import complete_future_threadsafe
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.model import Model
-from gllm.sample.logprobs import TokenLogProbs
 from gllm.sample.sampling_metadata import SamplingMetadata
 
 
 MAX_NUM_STOP_TOKENS = 4
+MAX_NUM_TOP_LOGPROBS = 20
 
 
 @dataclass
@@ -43,7 +44,11 @@ class RequestStates:
     # [B_max]
     top_p: torch.Tensor
     # [B_max]
-    max_num_logprobs: torch.Tensor
+    num_top_logprobs: torch.Tensor
+    # [B_max, T_max, max_num_logprobs]
+    top_logprobs: torch.Tensor
+    # [B_max, T_max, max_num_logprobs]
+    top_logprobs_token_ids: torch.Tensor
 
 
     def select(self, req_idxs):
@@ -58,7 +63,9 @@ class RequestStates:
             temperature=self.temperature[req_idxs],
             top_k=self.top_k[req_idxs],
             top_p=self.top_p[req_idxs],
-            max_num_logprobs=self.max_num_logprobs[req_idxs],
+            num_top_logprobs=self.num_top_logprobs[req_idxs],
+            top_logprobs=self.top_logprobs[req_idxs],
+            top_logprobs_token_ids=self.top_logprobs_token_ids[req_idxs],
         )
 
 
@@ -110,7 +117,9 @@ class BaseScheduler(ABC):
             temperature=torch.empty(self.max_batch_size, dtype=torch.float32, device=device),
             top_k=torch.empty(self.max_batch_size, dtype=torch.int32, device=device),
             top_p=torch.empty(self.max_batch_size, dtype=torch.float32, device=device),
-            max_num_logprobs=torch.empty(self.max_batch_size, dtype=torch.int32, device=device),
+            num_top_logprobs=torch.empty(self.max_batch_size, dtype=torch.int32, device=device),
+            top_logprobs=torch.empty((self.max_batch_size, self.max_seq_len, MAX_NUM_TOP_LOGPROBS), dtype=torch.float32, device=device),
+            top_logprobs_token_ids=torch.empty((self.max_batch_size, self.max_seq_len, MAX_NUM_TOP_LOGPROBS), dtype=torch.long, device=device),
         )
         self.req_state_keys = [f.name for f in fields(self.req_states)]
 
@@ -150,6 +159,11 @@ class BaseScheduler(ABC):
                         f"Prompt has {len(prompt_token_ids)} tokens, but the engine only supports {self.max_seq_len}."
                     )
                 
+                if req.num_top_logprobs > MAX_NUM_TOP_LOGPROBS:
+                    raise ValueError(
+                        f"num_top_logprobs must be <= {MAX_NUM_TOP_LOGPROBS}."
+                    )
+                
                 if req.max_new_tokens <= 0:
                     raise ValueError(
                         f"max_new_tokens must be >= 0."
@@ -187,7 +201,7 @@ class BaseScheduler(ABC):
                 rs.prompt_lens[idx] = prompt_len
                 rs.stop_token_ids[idx] = stop_token_ids_tensor
                 rs.max_new_tokens[idx] = req.max_new_tokens
-                rs.max_num_logprobs[idx] = req.max_num_logprobs
+                rs.num_top_logprobs[idx] = req.num_top_logprobs
                 rs.token_ids[idx, :prompt_len] = prompt_token_ids_tensor
                 rs.seq_lens[idx] = prompt_len
                 rs.block_table[idx][:num_prompt_blocks] = prompt_block_ids_tensor
@@ -224,7 +238,7 @@ class BaseScheduler(ABC):
             temperature=rs.temperature[prefill_start_idx:prefill_end_idx],
             top_k=rs.top_k[prefill_start_idx:prefill_end_idx],
             top_p=rs.top_p[prefill_start_idx:prefill_end_idx],
-            max_num_logprobs=rs.max_num_logprobs[prefill_start_idx:prefill_end_idx],
+            num_top_logprobs=rs.num_top_logprobs[prefill_start_idx:prefill_end_idx],
         )
 
         batch = BatchInputs(
@@ -270,7 +284,7 @@ class BaseScheduler(ABC):
             temperature=rs.temperature[:B],
             top_k=rs.top_k[:B],
             top_p=rs.top_p[:B],
-            max_num_logprobs=rs.max_num_logprobs[:B],
+            num_top_logprobs=rs.num_top_logprobs[:B],
         )
 
         return BatchInputs(
@@ -294,15 +308,25 @@ class BaseScheduler(ABC):
         seq_lens = finished_req_states.seq_lens
         block_table = finished_req_states.block_table
         num_blocks = finished_req_states.num_blocks
+        top_logprobs = finished_req_states.top_logprobs
+        top_logprobs_token_ids = finished_req_states.top_logprobs_token_ids
         for idx, req in enumerate(finished_reqs):
-            generated_token_ids = token_ids[idx, prompt_lens[idx]:seq_lens[idx]].tolist()
-            generated_text = self.model.detokenize(generated_token_ids)
+            num_top_logprobs = req.gen_req.num_top_logprobs
+            prompt_len = prompt_lens[idx]
+            seq_len = seq_lens[idx]
+            gen_token_ids = token_ids[idx, prompt_len:seq_len].tolist()
+            generated_text = self.model.detokenize(gen_token_ids)
+            # [T, num_top_logprobs]
+            gen_top_logprobs = top_logprobs[idx, prompt_len:seq_len, :num_top_logprobs].tolist()
+            # [T, num_top_logprobs]
+            gen_top_logprobs_token_ids = top_logprobs_token_ids[idx, prompt_len:seq_len, :num_top_logprobs].tolist()
+            gen_top_logprobs = [TokenLogProbs(logprobs, token_ids) for logprobs, token_ids in zip(gen_top_logprobs, gen_top_logprobs_token_ids)]
             complete_future_threadsafe(
                 req.future,
                 GenerationResult(
-                    token_ids=generated_token_ids,
-                    logprobs=req.gen_logprobs,
                     text=generated_text,
+                    token_ids=gen_token_ids,
+                    top_logprobs=gen_top_logprobs,
                 )
             )
             print(f"[LLMEngine] completed request '{req.id}'.")
@@ -315,7 +339,10 @@ class BaseScheduler(ABC):
         self,
         # [B, T_q]
         sampled_token_ids: torch.Tensor,
-        sampled_logprobs: list[TokenLogProbs],
+        # [B, T_q, top_logprobs]
+        sampled_top_logprobs: torch.Tensor,
+        # [B, T_q, top_logprobs]
+        sampled_top_logprobs_token_ids: torch.Tensor,
         req_offset: int = 0,
     ) -> None:
         """
@@ -332,6 +359,8 @@ class BaseScheduler(ABC):
         token_ids = self.req_states.token_ids[req_offset:self.batch_size]
         stop_token_ids = self.req_states.stop_token_ids[req_offset:self.batch_size]
         max_new_tokens = self.req_states.max_new_tokens[req_offset:self.batch_size]
+        top_logprobs = self.req_states.top_logprobs[req_offset:self.batch_size]
+        top_logprobs_token_ids = self.req_states.top_logprobs_token_ids[req_offset:self.batch_size]
 
         # [B, T_q]
         dummy_token_mask = sampled_token_ids == -1
@@ -346,7 +375,9 @@ class BaseScheduler(ABC):
         mask = torch.cumsum((dummy_token_mask | stop_token_mask).long(), dim=-1) == 0
         positions = seq_lens.long().unsqueeze(-1) + self.arange[:T_q]
         batch_idxs = self.arange[:B].unsqueeze(-1).expand_as(positions)
-        token_ids[batch_idxs[mask], positions[mask]] = sampled_token_ids[mask]
+        masked_batch_idxs = batch_idxs[mask]
+        masked_positions = positions[mask]
+        token_ids[masked_batch_idxs, masked_positions] = sampled_token_ids[mask]
         seq_lens += mask.sum(dim=-1)
         
         # Get number of generated tokens per request.
@@ -354,12 +385,10 @@ class BaseScheduler(ABC):
         # Mark requests as finished if max generation length is met.
         finished_mask |= (gen_lens >= max_new_tokens)
 
-        # Add logprobs.
-        # TODO: Track logprobs in tensors to prevent this GPU-CPU sync.
-        for idx in range(B):
-            req = self.reqs[req_offset + idx]
-            logprobs = sampled_logprobs[idx]
-            req.gen_logprobs.append(logprobs)
+        # Set sampled top logprobs.
+        num_top_logprobs = sampled_top_logprobs.shape[-1]
+        top_logprobs[masked_batch_idxs, masked_positions, :num_top_logprobs] = sampled_top_logprobs[mask]
+        top_logprobs_token_ids[masked_batch_idxs, masked_positions, :num_top_logprobs] = sampled_top_logprobs_token_ids[mask]
 
         # Compact the batch by moving over right-most ongoing requests to fill
         # empty slots of left-most finished requests, in that order, until there

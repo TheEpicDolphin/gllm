@@ -6,8 +6,7 @@ from gllm.engine.base_model_runner import BaseModelRunner
 from gllm.engine.batch_inputs import BatchInputs
 from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.model import Model
-from gllm.sample.logprobs import TokenLogProbs
-from gllm.sample.sampler import Sampler
+from gllm.sample.sampler import Sampler, SamplerOutput
 
 
 class ModelRunner(BaseModelRunner):
@@ -40,7 +39,7 @@ class ModelRunner(BaseModelRunner):
     def prefill_step(
         self,
         batch: BatchInputs,
-    ) -> tuple[torch.Tensor, list[TokenLogProbs]]:
+    ) -> SamplerOutput:
         B = batch.seq_lens.shape[0]
         seq_lens = batch.seq_lens
         max_seq_len = batch.max_seq_len
@@ -79,19 +78,18 @@ class ModelRunner(BaseModelRunner):
         assert not torch.isnan(logits).any()
         
         with record_function("sample"):
-            # [B], [B]
-            sampled_token_ids, logprobs = self.sampler.forward(
-                # [B, vocab_size]
-                logits[batch_idxs, seq_lens - 1],
+            output = self.sampler.forward(
+                # [B, 1, vocab_size]
+                logits[batch_idxs, seq_lens - 1].unsqueeze(1),
                 batch.sampling_metadata
             )
-        return sampled_token_ids.unsqueeze(-1), logprobs
+        return output
     
 
     def decode_step(
         self,
         batch: BatchInputs,
-    ) -> tuple[torch.Tensor, list[TokenLogProbs]]:
+    ) -> SamplerOutput:
         B = batch.seq_lens.shape[0]
         seq_lens = batch.seq_lens
         max_seq_len = batch.max_seq_len
@@ -134,7 +132,7 @@ class ModelRunner(BaseModelRunner):
         )
 
         with record_function("model.forward"):
-            # [B, T_q, hidden_size]
+            # [B, 1, hidden_size]
             logits = self.model.forward(
                 query_token_ids,
                 attention_metadata,
@@ -143,10 +141,9 @@ class ModelRunner(BaseModelRunner):
         assert not torch.isnan(logits).any()
         
         with record_function("sample"):
-            # [B], [B]
-            sampled_token_ids, logprobs = self.sampler.forward(
-                # [B, vocab_size]
-                logits[:, -1],
+            output = self.sampler.forward(
+                # [B, 1, vocab_size]
+                logits[:, -1:],
                 batch.sampling_metadata
             )
-        return sampled_token_ids.unsqueeze(-1), logprobs
+        return output
