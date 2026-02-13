@@ -86,7 +86,7 @@ class Sampler:
         )
 
         # Apply temperature.
-        processed_logits = raw_logits / sampling_metadata.temperature.view(-1, 1)
+        processed_logits = raw_logits / sampling_metadata.temperature.view(-1, 1, 1)
         # Sample top-k first (more efficient).
         # [B, T_q, K_max], [B, T_q, K_max]
         top_k_logits, top_k_token_ids = self.sample_top_k(processed_logits, sampling_metadata.top_k)
@@ -101,7 +101,7 @@ class Sampler:
         # [B, T_q, 1]
         sampled_idxs = sampled_idxs.view(B, T_q, 1)
         # [B, T_q]
-        sampled_token_ids = top_k_token_ids.gather(1, sampled_idxs).squeeze(-1)
+        sampled_token_ids = torch.gather(top_k_token_ids, dim=2, index=sampled_idxs).squeeze(-1)
         
         return SamplerOutput(
             sampled_token_ids=sampled_token_ids,

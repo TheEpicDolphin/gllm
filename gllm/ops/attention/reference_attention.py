@@ -38,8 +38,8 @@ def reference_attention_fwd(
     v = v.transpose(1, 2)
 
     # Compute attention scores: Q @ K^T / sqrt(d).
-    # [B, num_q_heads, T_q, T]
     scale = 1.0 / head_dim**0.5
+    # [B, num_q_heads, T_q, T]
     S = torch.matmul(q, k.transpose(-2, -1)) * scale
     # Apply attention bias.
     S += bias.unsqueeze(1)

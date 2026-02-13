@@ -9,8 +9,10 @@ import torch
 
 from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.batch_inputs import BatchInputs
+from gllm.engine.decode_output import DecodeOutput
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult
 from gllm.engine.logprobs import TokenLogProbs
+from gllm.engine.prefill_output import PrefillOutput
 from gllm.engine.utils import complete_future_threadsafe
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.model import Model
@@ -245,7 +247,6 @@ class BaseScheduler(ABC):
             max_seq_len=max_seq_len,
             seq_lens=seq_lens,
             token_ids=rs.token_ids[prefill_start_idx:prefill_end_idx, :max_seq_len],
-            token_positions=self.arange[:max_seq_len].unsqueeze(0).expand(B, -1),
             slot_mapping=slot_mapping,
             sampling_metadata=sampling_metadata,
             paged_kv_cache=self.paged_kv_cache,
@@ -257,7 +258,6 @@ class BaseScheduler(ABC):
         rs = self.req_states
         B = self.batch_size
         for idx in range(B):
-            # Process ongoing request.
             cur_num_blocks = rs.num_blocks[idx].item()
             num_required_blocks = self.paged_kv_cache.num_required_blocks(rs.seq_lens[idx].item())
             # Allocate new blocks to hold the current sequence, if needed.
@@ -276,7 +276,7 @@ class BaseScheduler(ABC):
         # Create KV cache slot mapping.
         # [B, max_num_blocks * block_size]
         slot_mapping = (self.paged_kv_cache.block_size * block_table.unsqueeze(2) + self.block_offsets).view(B, -1)
-        # [B, T_q]
+        # [B, T]
         slot_mapping = slot_mapping[:, :max_seq_len].contiguous()
 
         # Update sampling metadata.
@@ -291,7 +291,6 @@ class BaseScheduler(ABC):
             max_seq_len=max_seq_len,
             seq_lens=seq_lens,
             token_ids=rs.token_ids[:B, :max_seq_len],
-            token_positions=self.arange[:max_seq_len].unsqueeze(0).expand(B, -1),
             slot_mapping=slot_mapping,
             sampling_metadata=sampling_metadata,
             paged_kv_cache=self.paged_kv_cache,
@@ -333,62 +332,69 @@ class BaseScheduler(ABC):
             # Release KV cache blocks.
             block_ids = block_table[idx, :num_blocks[idx]].tolist()
             self.paged_kv_cache.release_blocks(block_ids)
-    
 
-    def update(
+
+    def _write_step_outputs(
         self,
         # [B, T_q]
-        sampled_token_ids: torch.Tensor,
+        output_token_ids: torch.Tensor,
         # [B, T_q, top_logprobs]
-        sampled_top_logprobs: torch.Tensor,
+        output_top_logprobs: torch.Tensor,
         # [B, T_q, top_logprobs]
-        sampled_top_logprobs_token_ids: torch.Tensor,
-        req_offset: int = 0,
+        output_top_logprobs_token_ids: torch.Tensor,
+        offset_idx: int = 0,
+    ) -> None:
+        B, T_q = output_token_ids.shape
+        seq_lens = self.req_states.seq_lens[offset_idx:self.batch_size]
+        token_ids = self.req_states.token_ids[offset_idx:self.batch_size]
+        top_logprobs = self.req_states.top_logprobs[offset_idx:self.batch_size]
+        top_logprobs_token_ids = self.req_states.top_logprobs_token_ids[offset_idx:self.batch_size]
+
+        # Set output token ids.
+        query_positions = seq_lens.long().unsqueeze(-1) + self.arange[:T_q]
+        batch_idxs = self.arange[:B].unsqueeze(-1).expand_as(query_positions)
+        token_ids[batch_idxs, query_positions] = output_token_ids
+
+        # Set output top logprobs.
+        num_top_logprobs = output_top_logprobs.shape[-1]
+        top_logprobs[batch_idxs, query_positions, :num_top_logprobs] = output_top_logprobs
+        top_logprobs_token_ids[batch_idxs, query_positions, :num_top_logprobs] = output_top_logprobs_token_ids
+    
+
+    def _finalize_step(
+        self,
+        # [B, T_q]
+        output_token_ids: torch.Tensor,
+        offset_idx: int = 0,
     ) -> None:
         """
-        sampled_token_ids: [B, T_q] tensor of sampled token ids for the current decode step,
-            for each request in the batch. May be padded with -1 to indicate tokens that should
-            be ignored (e.g. for rejected token ids during speculative decoding).
-        sampled_logprobs: list of length B, with per-token logprobs.
-        req_offset: Offset into the request batch. This is needed during the prefill step, when
+        output_token_ids: [B, T_q] tensor of token ids outputted during the last decode step.
+            May be padded with -1 to indicate tokens that should be ignored (e.g. for rejected
+            token ids during speculative decoding).
+        offset_idx: Offset into the request batch. This is needed during the prefill step, when
             new requests are added to the end of the batch.
         """
-        B, T_q = sampled_token_ids.shape
-        seq_lens = self.req_states.seq_lens[req_offset:self.batch_size]
-        prompt_lens = self.req_states.prompt_lens[req_offset:self.batch_size]
-        token_ids = self.req_states.token_ids[req_offset:self.batch_size]
-        stop_token_ids = self.req_states.stop_token_ids[req_offset:self.batch_size]
-        max_new_tokens = self.req_states.max_new_tokens[req_offset:self.batch_size]
-        top_logprobs = self.req_states.top_logprobs[req_offset:self.batch_size]
-        top_logprobs_token_ids = self.req_states.top_logprobs_token_ids[req_offset:self.batch_size]
+        seq_lens = self.req_states.seq_lens[offset_idx:self.batch_size]
+        prompt_lens = self.req_states.prompt_lens[offset_idx:self.batch_size]
+        stop_token_ids = self.req_states.stop_token_ids[offset_idx:self.batch_size]
+        max_new_tokens = self.req_states.max_new_tokens[offset_idx:self.batch_size]
 
         # [B, T_q]
-        dummy_token_mask = sampled_token_ids == -1
+        dummy_token_mask = output_token_ids == -1
         # Mark requests as finished if stop token is detected.
         # [B, T_q]
-        stop_token_mask = (sampled_token_ids.unsqueeze(-1) == stop_token_ids.unsqueeze(1)).any(dim=-1)
+        stop_token_mask = (output_token_ids.unsqueeze(-1) == stop_token_ids.unsqueeze(1)).any(dim=-1)
         # [B]
         finished_mask = stop_token_mask.any(dim=-1)
         
         # Set sampled token ids before the first dummy or stop token, whichever
         # comes first.
         mask = torch.cumsum((dummy_token_mask | stop_token_mask).long(), dim=-1) == 0
-        positions = seq_lens.long().unsqueeze(-1) + self.arange[:T_q]
-        batch_idxs = self.arange[:B].unsqueeze(-1).expand_as(positions)
-        masked_batch_idxs = batch_idxs[mask]
-        masked_positions = positions[mask]
-        token_ids[masked_batch_idxs, masked_positions] = sampled_token_ids[mask]
         seq_lens += mask.sum(dim=-1)
-        
         # Get number of generated tokens per request.
         gen_lens = seq_lens - prompt_lens
         # Mark requests as finished if max generation length is met.
         finished_mask |= (gen_lens >= max_new_tokens)
-
-        # Set sampled top logprobs.
-        num_top_logprobs = sampled_top_logprobs.shape[-1]
-        top_logprobs[masked_batch_idxs, masked_positions, :num_top_logprobs] = sampled_top_logprobs[mask]
-        top_logprobs_token_ids[masked_batch_idxs, masked_positions, :num_top_logprobs] = sampled_top_logprobs_token_ids[mask]
 
         # Compact the batch by moving over right-most ongoing requests to fill
         # empty slots of left-most finished requests, in that order, until there
@@ -408,7 +414,7 @@ class BaseScheduler(ABC):
 
         # Get indices of finished requests.
         # [1, 3, 5]
-        finished_req_idxs = req_offset + finished_mask.nonzero().flatten()
+        finished_req_idxs = offset_idx + finished_mask.nonzero().flatten()
 
         # Decrement batch size by number of finished requests.
         self.batch_size -= finished_req_idxs.shape[0]
@@ -421,7 +427,7 @@ class BaseScheduler(ABC):
 
         # Get indices of ongoing requests in reverse order.
         # [6, 4, 2, 0]
-        ongoing_req_idxs_reversed = req_offset + torch.flip((~finished_mask).nonzero().flatten(), dims=[0])
+        ongoing_req_idxs_reversed = offset_idx + torch.flip((~finished_mask).nonzero().flatten(), dims=[0])
         # Clamp tensors to the minimum size of the two.
         min_size = min(finished_req_idxs.shape[0], ongoing_req_idxs_reversed.shape[0])
         # [1, 3, 5]
@@ -442,3 +448,20 @@ class BaseScheduler(ABC):
         # Iterate reqs list.
         for from_idx, to_idx in zip(from_req_idxs, to_req_idxs):
             self.reqs[to_idx] = self.reqs[from_idx]
+    
+
+    def prefill_update(
+        self,
+        prefill_output: PrefillOutput,
+        prefill_start_idx: int,
+    ) -> None:
+        self._write_step_outputs(*prefill_output, offset_idx=prefill_start_idx)
+        self._finalize_step(prefill_output.token_ids, offset_idx=prefill_start_idx)
+
+
+    def decode_update(
+        self,
+        decode_output: DecodeOutput,
+    ) -> None:
+        self._write_step_outputs(*decode_output)
+        self._finalize_step(decode_output.token_ids)

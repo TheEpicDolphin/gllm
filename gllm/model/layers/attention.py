@@ -17,10 +17,10 @@ class AttentionMetadata:
     seq_lens: torch.Tensor
     # [B]
     query_lens: torch.Tensor
-    # [B, T]
-    slot_mapping: torch.Tensor
+    # [B, T_c]
+    context_slot_mapping: torch.Tensor | None
     # [B, T_q]
-    query_slot_mapping: torch.Tensor
+    query_slot_mapping: torch.Tensor | None
     # [B, T_q, T]
     bias: torch.Tensor
 
@@ -156,24 +156,32 @@ class Attention(BaseModule):
         k = self.rope_forward(k, cos_pos, sin_pos)
         
         if kv_cache is not None:
-            # Cache query token K/Vs.
+            # Get the context K/Vs.
+            k_cache = v_cache = None
+            # [B, T_c]
+            context_slot_mapping = attention_metadata.context_slot_mapping
+            if context_slot_mapping is not None:
+                # [B * T_c]
+                context_slot_mapping = context_slot_mapping.view(-1)
+                # [B, T_c, num_kv_heads, head_dim]
+                k_cache = kv_cache[0, context_slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(k.dtype)
+                v_cache = kv_cache[1, context_slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(v.dtype)
+
+            # Cache the query K/Vs.
             # TODO: Remove dummy query slots to reduce copying.
             # [B, T_q]
             query_slot_mapping = attention_metadata.query_slot_mapping
-            # [B * T_q]
-            query_slot_mapping = query_slot_mapping.view(-1)
-            kv_dtype = kv_cache.dtype
-            kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
-            kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
-            
-            # Get sequence K/Vs.
-            # [B, T]
-            slot_mapping = attention_metadata.slot_mapping
-            # [B * T]
-            slot_mapping = slot_mapping.view(-1)
+            if query_slot_mapping is not None:
+                # [B * T_q]
+                query_slot_mapping = query_slot_mapping.view(-1)
+                kv_dtype = kv_cache.dtype
+                kv_cache[0, query_slot_mapping, :, :] = k.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+                kv_cache[1, query_slot_mapping, :, :] = v.view(-1, self.num_kv_heads, self.head_dim).to(kv_dtype)
+
+            # Concatenate the context and query K/Vs.
             # [B, T, num_kv_heads, head_dim]
-            k = kv_cache[0, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(k.dtype)
-            v = kv_cache[1, slot_mapping, :, :].view(B, -1, self.num_kv_heads, self.head_dim).to(v.dtype)
+            k = k if k_cache is None else torch.cat([k_cache, k], dim=1)
+            v = v if v_cache is None else torch.cat([v_cache, v], dim=1)
         
         # Compute attention.
         attn_out, p = reference_attention_fwd(

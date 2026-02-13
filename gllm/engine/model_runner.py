@@ -4,9 +4,11 @@ from torch.profiler import record_function
 from gllm.config.generator_config import GeneratorConfig
 from gllm.engine.base_model_runner import BaseModelRunner
 from gllm.engine.batch_inputs import BatchInputs
+from gllm.engine.decode_output import DecodeOutput
+from gllm.engine.prefill_output import PrefillOutput
 from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.model import Model
-from gllm.sample.sampler import Sampler, SamplerOutput
+from gllm.sample.sampler import Sampler
 
 
 class ModelRunner(BaseModelRunner):
@@ -17,7 +19,6 @@ class ModelRunner(BaseModelRunner):
         device: str,
     ):
         super().__init__()
-        
         self.model = Model(
             model_path=model_path,
             max_seq_len=gen_config.max_seq_len,
@@ -31,7 +32,6 @@ class ModelRunner(BaseModelRunner):
             device=device,
         )
         self.gen_config = gen_config
-        self.device = device
         # [max(B_max, T_max)]
         self.arange = torch.arange(max(gen_config.max_batch_size, gen_config.max_seq_len), device=device)
     
@@ -39,10 +39,10 @@ class ModelRunner(BaseModelRunner):
     def prefill_step(
         self,
         batch: BatchInputs,
-    ) -> SamplerOutput:
+    ) -> PrefillOutput:
         B = batch.seq_lens.shape[0]
-        seq_lens = batch.seq_lens
         max_seq_len = batch.max_seq_len
+        seq_lens = batch.seq_lens
         batch_idxs = self.arange[:B]
         seq_idxs = self.arange[:max_seq_len]
         # [B, T]
@@ -54,7 +54,7 @@ class ModelRunner(BaseModelRunner):
             (B, max_seq_len, max_seq_len),
             fill_value=float("-inf"),
             dtype=self.model.dtype,
-            device=self.device,
+            device=self.model.device,
         )
         bias.triu_(diagonal=1)
 
@@ -63,7 +63,7 @@ class ModelRunner(BaseModelRunner):
             positions=token_positions,
             seq_lens=seq_lens,
             query_lens=seq_lens,
-            slot_mapping=batch.slot_mapping,
+            context_slot_mapping=None,
             query_slot_mapping=batch.slot_mapping,
             bias=bias,
         )
@@ -78,24 +78,26 @@ class ModelRunner(BaseModelRunner):
         assert not torch.isnan(logits).any()
         
         with record_function("sample"):
-            output = self.sampler.forward(
+            sampler_output = self.sampler.forward(
                 # [B, 1, vocab_size]
                 logits[batch_idxs, seq_lens - 1].unsqueeze(1),
                 batch.sampling_metadata
             )
-        return output
+        return PrefillOutput(*sampler_output)
     
 
     def decode_step(
         self,
         batch: BatchInputs,
-    ) -> SamplerOutput:
+    ) -> DecodeOutput:
         B = batch.seq_lens.shape[0]
-        seq_lens = batch.seq_lens
         max_seq_len = batch.max_seq_len
-        context_padding = max_seq_len - seq_lens
+        seq_lens = batch.seq_lens
+        context_lens = seq_lens - 1
+        max_context_len = context_lens.max()
+        context_padding = max_context_len - context_lens
         # [B, 1]
-        query_token_positions = (seq_lens - 1).unsqueeze(1)
+        query_token_positions = context_lens.unsqueeze(1)
         # [B, 1]
         query_token_ids = batch.token_ids.gather(dim=-1, index=query_token_positions)
         
@@ -104,7 +106,7 @@ class ModelRunner(BaseModelRunner):
         bias = torch.zeros(
             (B, 1, max_seq_len),
             dtype=self.model.dtype,
-            device=self.device,
+            device=self.model.device,
         )
 
         # Apply padding to slot mapping and attention bias. Padding is
@@ -112,21 +114,22 @@ class ModelRunner(BaseModelRunner):
         padded_slot_mapping = torch.zeros(
             (B, max_seq_len),
             dtype=batch.slot_mapping.dtype,
-            device=self.device,
+            device=batch.slot_mapping.device,
         )
         for i in range(B):
             padded_slot_mapping[i, context_padding[i]:] = batch.slot_mapping[i, :seq_lens[i]]
             bias[i, :, :context_padding[i]] = float("-inf")
         
         # Create query slot mapping.
+        context_slot_mapping = padded_slot_mapping[:, :-1].contiguous()
         query_slot_mapping = padded_slot_mapping[:, -1:].contiguous()
 
         # Create attention metadata.
         attention_metadata = AttentionMetadata(
             positions=query_token_positions,
-            query_lens=torch.ones_like(seq_lens),
             seq_lens=seq_lens,
-            slot_mapping=padded_slot_mapping,
+            query_lens=torch.ones_like(seq_lens),
+            context_slot_mapping=context_slot_mapping,
             query_slot_mapping=query_slot_mapping,
             bias=bias,
         )
@@ -141,9 +144,8 @@ class ModelRunner(BaseModelRunner):
         assert not torch.isnan(logits).any()
         
         with record_function("sample"):
-            output = self.sampler.forward(
-                # [B, 1, vocab_size]
-                logits[:, -1:],
+            sampler_output = self.sampler.forward(
+                logits,
                 batch.sampling_metadata
             )
-        return output
+        return DecodeOutput(*sampler_output)

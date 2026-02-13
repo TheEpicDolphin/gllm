@@ -61,6 +61,6 @@ class HuggingFaceLLMEngine(LLMEngineBase):
             results[idx] = GenerationResult(
                 token_ids=generated_token_ids,
                 text=generated_text,
-                logprobs=None,
+                top_logprobs=None,
             )
         return results

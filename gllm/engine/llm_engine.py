@@ -26,6 +26,9 @@ class LLMEngine(LLMEngineBase):
         device: str,
     ):
         self.alive = False
+        # TODO: Use factory method to construct ModelRunner
+        # and Scheduler depending on what spec decoding config
+        # is present in GeneratorConfig.
         self.runner = ModelRunner(
             model_path=model_path,
             gen_config=gen_config,
@@ -94,14 +97,14 @@ class LLMEngine(LLMEngineBase):
             if len(queued_reqs) > 0:
                 prefill_reqs, futures, _ = zip(*queued_reqs)
                 # Prefill new requests.
-                prefill_batch, prefill_start = self.scheduler.prepare_prefill_batch(prefill_reqs, futures)
+                prefill_batch, prefill_start_idx = self.scheduler.prepare_prefill_batch(prefill_reqs, futures)
                 if prefill_batch is not None:
-                    sampler_output = self.runner.prefill_step(prefill_batch)
-                    self.scheduler.update(*sampler_output, req_offset=prefill_start)
+                    prefill_output = self.runner.prefill_step(prefill_batch)
+                    self.scheduler.prefill_update(prefill_output, prefill_start_idx=prefill_start_idx)
             # Decode step for all requests.
             decode_batch = self.scheduler.prepare_decode_batch()
-            sampler_output = self.runner.decode_step(decode_batch)
-            self.scheduler.update(*sampler_output)
+            decode_output = self.runner.decode_step(decode_batch)
+            self.scheduler.decode_update(decode_output)
     
     
     def stop(self):
@@ -111,14 +114,14 @@ class LLMEngine(LLMEngineBase):
     def generate(self, reqs: list[GenerationRequest]) -> list[GenerationResult]:
         # Run prefill step.
         futures = [ConcurrentFuture() for _ in reqs]
-        prefill_batch, prefill_start = self.scheduler.prepare_prefill_batch(reqs, futures)
+        prefill_batch, prefill_start_idx = self.scheduler.prepare_prefill_batch(reqs, futures)
         if prefill_batch is not None:
-            sampler_output = self.runner.prefill_step(prefill_batch)
-            self.scheduler.update(*sampler_output, req_offset=prefill_start)
+            prefill_output = self.runner.prefill_step(prefill_batch)
+            self.scheduler.prefill_update(prefill_output, prefill_start_idx=prefill_start_idx)
 
         # Run decode steps until all requests are finished.
         while self.scheduler.num_active_requests > 0:
             decode_batch = self.scheduler.prepare_decode_batch()
-            sampler_output = self.runner.decode_step(decode_batch)
-            self.scheduler.update(*sampler_output)
+            decode_output = self.runner.decode_step(decode_batch)
+            self.scheduler.decode_update(decode_output)
         return [future.result() for future in futures]

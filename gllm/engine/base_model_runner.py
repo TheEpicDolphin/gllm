@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 
 from gllm.engine.batch_inputs import BatchInputs
-from gllm.sample.sampler import SamplerOutput
+from gllm.engine.decode_output import DecodeOutput
+from gllm.engine.prefill_output import PrefillOutput
 
 
 class BaseModelRunner(ABC):
@@ -9,7 +10,7 @@ class BaseModelRunner(ABC):
     def prefill_step(
         self,
         batch: BatchInputs,
-    ) -> SamplerOutput:
+    ) -> PrefillOutput:
         raise NotImplementedError
 
 
@@ -17,5 +18,5 @@ class BaseModelRunner(ABC):
     def decode_step(
         self,
         batch: BatchInputs,
-    ) -> SamplerOutput:
+    ) -> DecodeOutput:
         raise NotImplementedError

@@ -14,8 +14,6 @@ class BatchInputs:
     # [B, T]
     token_ids: torch.Tensor
     # [B, T]
-    token_positions: torch.Tensor
-    # [B, T]
     slot_mapping: torch.Tensor
     # Sampling metadata.
     sampling_metadata: SamplingMetadata
