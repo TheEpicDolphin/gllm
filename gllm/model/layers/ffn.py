@@ -1,32 +1,25 @@
 import torch
 import torch.nn.functional as F
 
-from gllm.config.model_config import ActivationFunction, ModelConfig
+from gllm.model.config import ActivationFunction, ModelConfig
 from gllm.model.layers.base_module import BaseModule
 from gllm.model.layers.linear import Linear
+from gllm.model.params import FFNParams
 
 class FFN(BaseModule):
     def __init__(
         self,
-        id: str,
         model_config: ModelConfig,
-        safetensors
+        params: FFNParams,
     ):
-        super().__init__(id, None)
+        super().__init__(None)
         
-        dtype = model_config.dtype
         # [intermediate_size, hidden_size]
-        up_proj_id = f"{id}.up_proj"
-        up_proj_weights = safetensors[f"{up_proj_id}.weight"].to(dtype)
-        self.linear_up = Linear(up_proj_id, up_proj_weights)
+        self.linear_up = Linear(params.up_proj)
         # [intermediate_size, hidden_size]
-        gate_proj_id = f"{id}.gate_proj"
-        gate_proj_weights = safetensors[f"{gate_proj_id}.weight"].to(dtype)
-        self.linear_gate = Linear(gate_proj_id, gate_proj_weights)
+        self.linear_gate = Linear(params.gate_proj)
         # [hidden_size, intermediate_size]
-        down_proj_id = f"{id}.down_proj"
-        down_proj_weights = safetensors[f"{down_proj_id}.weight"].to(dtype)
-        self.linear_down = Linear(down_proj_id, down_proj_weights)
+        self.linear_down = Linear(params.down_proj)
         
         self.child_modules = [
             self.linear_up,

@@ -1,7 +1,7 @@
 import torch
 from torch.profiler import record_function
 
-from gllm.config.generator_config import GeneratorConfig
+from gllm.engine.config import EngineConfig
 from gllm.engine.base_model_runner import BaseModelRunner
 from gllm.engine.batch_inputs import BatchInputs
 from gllm.engine.decode_output import DecodeOutput
@@ -14,26 +14,19 @@ from gllm.sample.sampler import Sampler
 class ModelRunner(BaseModelRunner):
     def __init__(
         self,
-        model_path: str,
-        gen_config: GeneratorConfig,
+        model: Model,
+        engine_config: EngineConfig,
         device: str,
     ):
         super().__init__()
-        self.model = Model(
-            model_path=model_path,
-            max_seq_len=gen_config.max_seq_len,
-            device=device,
-            dtype=gen_config.model_dtype,
-            kv_dtype=gen_config.kv_dtype,
-            cpu_offloading=gen_config.cpu_offloading,
-        )
+        self.model = model
         self.sampler = Sampler(
-            max_batch_size=gen_config.max_batch_size,
+            max_batch_size=engine_config.max_batch_size,
             device=device,
         )
-        self.gen_config = gen_config
+        self.engine_config = engine_config
         # [max(B_max, T_max)]
-        self.arange = torch.arange(max(gen_config.max_batch_size, gen_config.max_seq_len), device=device)
+        self.arange = torch.arange(max(engine_config.max_batch_size, engine_config.max_seq_len), device=device)
     
 
     def prefill_step(

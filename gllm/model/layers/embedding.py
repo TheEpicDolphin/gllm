@@ -1,15 +1,15 @@
 import torch
 
 from gllm.model.layers.base_module import BaseModule
+from gllm.model.params import Parameter
 
 
 class Embedding(BaseModule):
     def __init__(
         self,
-        id: str,
-        weights: torch.Tensor,
+        parameter: Parameter,
     ):
-        super().__init__(id, weights)
+        super().__init__(parameter)
 
 
     def _forward_impl(

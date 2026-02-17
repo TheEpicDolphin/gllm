@@ -21,11 +21,11 @@ def test_model_backward_correctness(
     torch.cuda.manual_seed(42)
     
     # Create model.
-    model = Model(
-        model_path="meta-llama/Llama-3.2-1B-Instruct",
-        max_seq_len=1024,
+    model = Model.from_path(
+        "meta-llama/Llama-3.2-1B-Instruct",
         device="cpu",
-        dtype="float64",
+        max_seq_len=1024,
+        dtype_override=torch.float64,
     )
 
     with model.training_mode():

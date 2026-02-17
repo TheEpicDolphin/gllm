@@ -2,18 +2,16 @@ from typing import cast, Iterable
 
 import torch
 
-from gllm.model.layers.parameter import Parameter
+from gllm.model.params import Parameter
 
 StagingBuffers = torch.Tensor | list["StagingBuffers"]
 
 class BaseModule:
     def __init__(
         self,
-        id: str,
-        weights: torch.Tensor | None,
+        parameter: Parameter | None
     ):
-        self._id = id
-        self._parameter: Parameter | None = Parameter(weights) if weights is not None else None
+        self._parameter = parameter
         self._preloaded_weights = None
         self.child_modules: list[BaseModule] = []
         
@@ -52,7 +50,7 @@ class BaseModule:
         weights_dict: dict[str, torch.Tensor]
     ) -> None:
         if self._parameter is not None:
-            weights_dict[f"{self._id}.weight"] = self._parameter.weights
+            weights_dict[f"{self._parameter.id}.weight"] = self._parameter.weights
         for module in self.child_modules:
             module.save_tensors(weights_dict)
     

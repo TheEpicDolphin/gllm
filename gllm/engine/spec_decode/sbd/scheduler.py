@@ -1,6 +1,6 @@
 import torch
 
-from gllm.config.generator_config import GeneratorConfig
+from gllm.engine.config import EngineConfig
 from gllm.engine.base_scheduler import BaseScheduler
 from gllm.engine.batch_inputs import BatchInputs
 from gllm.engine.decode_output import DecodeOutput
@@ -8,15 +8,15 @@ from gllm.engine.prefill_output import PrefillOutput
 from gllm.model.model import Model
 
 
-class SBDScheduler(BaseScheduler):
+class Scheduler(BaseScheduler):
     def __init__(
         self,
         model: Model,
-        gen_config: GeneratorConfig,
+        engine_config: EngineConfig,
         device: str,
     ):
-        self.sbd_config = gen_config.sbd_config
-        super().__init__(model, gen_config, device)
+        self.sbd_config = engine_config.sbd_config
+        super().__init__(model, engine_config, device)
     
 
     def prepare_decode_batch(self) -> BatchInputs:

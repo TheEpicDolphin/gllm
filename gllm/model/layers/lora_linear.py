@@ -1,18 +1,20 @@
 import torch
 
 from gllm.model.layers.linear import Linear
+from gllm.model.params import Parameter
 
 
 class LoRALinear(Linear):
     def __init__(
         self,
-        id: str,
-        weights: torch.Tensor,
+        parameter: Parameter,
         r: int,
         alpha: float,
     ):
-        super().__init__(id, weights)
+        super().__init__(parameter)
         
+        id = parameter.id
+        weights = parameter.weights
         # Initialize low-rank matrices.
         d_out, d_in = weights.shape
         # B is initialized to all zeros.

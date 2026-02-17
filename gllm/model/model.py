@@ -1,14 +1,12 @@
-import json
 import os
 
 from contextlib import contextmanager
 
 import torch
-from safetensors.torch import load_file
 from tokenizers import Tokenizer
 from torch.profiler import record_function
 
-from gllm.config.model_config import ModelConfig
+from gllm.model.config import ModelConfig
 from gllm.model.kv_cache.paged_kv_cache import PagedKVCache
 from gllm.model.layers.attention import AttentionMetadata
 from gllm.model.layers.base_module import BaseModule
@@ -16,92 +14,44 @@ from gllm.model.layers.embedding import Embedding
 from gllm.model.layers.linear import Linear
 from gllm.model.layers.norm import RMSNorm
 from gllm.model.layers.transformer_layer import TransformerLayer
-
-CPU_DEVICE = "cpu"
+from gllm.model.params import ModelParams
 
 
 class Model(BaseModule):
     def __init__(
         self,
-        model_path: str,
-        max_seq_len: int,
+        config: ModelConfig,
+        params: ModelParams,
+        tokenizer: None,
         device: str,
-        dtype: str | None = None,
-        kv_dtype: str | None = None,
-        cpu_offloading: bool = False,
+        max_seq_len: int,
+        offload_device: str | None = None,
     ):
-        super().__init__("model", None)
+        super().__init__(None)
         
+        self.config = config
+        self.tokenizer = tokenizer
         self.device = torch.device(device)
-        self.cpu_offloading = device != "cpu" and cpu_offloading
-        
-        if os.path.exists(model_path):
-            # Get local filepaths for tokenizer, config, and weights.
-            tokenizer_filepath = os.path.join(model_path, "tokenizer.json")
-            config_filepath = os.path.join(model_path, "config.json")
-            weights_filepath = os.path.join(model_path, "model.safetensors")
-        else:
-            # Assume model path is a HuggingFace repo id.
-            from huggingface_hub import hf_hub_download
-            
-            # Download files for tokenizer, config, and weights.
-            tokenizer_filepath = hf_hub_download(repo_id=model_path, filename="tokenizer.json")
-            config_filepath = hf_hub_download(repo_id=model_path, filename="config.json")
-            weights_filepath = hf_hub_download(repo_id=model_path, filename="model.safetensors")
-        
-        # Load tokenizer.
-        self.tokenizer = Tokenizer.from_file(tokenizer_filepath)
-
-        # Load model config.
-        with open(config_filepath, "r") as f:
-            config = json.load(f)
-        self.config = ModelConfig(
-            dtype=getattr(torch, dtype or config["torch_dtype"]),
-            hidden_size=config["hidden_size"],
-            head_dim=config["head_dim"],
-            intermediate_size=config["intermediate_size"],
-            act_func=config["hidden_act"],
-            num_layers=config["num_hidden_layers"],
-            num_attn_heads=config["num_attention_heads"],
-            num_kv_heads=config["num_key_value_heads"],
-            rms_norm_eps=config["rms_norm_eps"],
-            eos_token_ids=self.parse_eos_token_ids(config),
-            kv_dtype=getattr(torch, kv_dtype or config["torch_dtype"]),
-            rope_theta=config["rope_theta"],
-            vocab_size=config["vocab_size"],
-        )
-        
-        # Load model safetensors.
-        # If cpu_offloading is true, weights are kept in CPU RAM and loaded to GPU only when needed.
-        initial_weights_device = CPU_DEVICE if self.cpu_offloading else device
-        safetensors = load_file(weights_filepath, device=initial_weights_device)
+        self.cpu_offloading = self.device.type == "cuda" and offload_device == "cpu"
 
         # Initialize transformer layers.
         self.layers: list[TransformerLayer] = []
-        for layer_idx in range(self.config.num_layers):
+        for idx in range(self.config.num_layers):
             self.layers.append(TransformerLayer(
-                f"{self._id}.layers.{layer_idx}",
-                model_config=self.config,
-                safetensors=safetensors,
+                self.config,
+                params.layers[idx],
             ))
-        
+        # Initialize embedding. This is indexed into using the token
+        # ids to get the embedding vectors.
+        self.embed = Embedding(params.embed)
+        # Initialize the LM head. This is multiplied with the output
+        # hidden states to obtain the logits.
+        self.lm_head = Linear(params.lm_head)
         # Initialize final norm.
-        final_norm_id = f"{self._id}.norm"
-        final_norm_weights = safetensors[f"{final_norm_id}.weight"].to(self.dtype)
         self.final_norm = RMSNorm(
-            final_norm_id,
-            weights=final_norm_weights,
+            params.final_norm,
             eps=self.config.rms_norm_eps
         )
-        
-        # Get embedding matrix. This is indexed into using the token
-        # ids to get the embedding vectors. It is also used as an LM
-        # head by multiplying with the hidden states to obtain the
-        # logits.
-        embedding_id = f"{self._id}.embed_tokens"
-        self.embedding_weights = safetensors[f"{embedding_id}.weight"].to(self.dtype)
-        self.embed = Embedding(embedding_id, self.embedding_weights)
-        self.lm_head = Linear(embedding_id, self.embedding_weights)
         
         # Construct RoPE sin/cos caches for positions up to T_max.
         # [T_max]
@@ -155,15 +105,52 @@ class Model(BaseModule):
     def vocab_size(self) -> int:
         return self.config.vocab_size
         
-        
-    def parse_eos_token_ids(self, config):
-        value = config["eos_token_id"]
-        if isinstance(value, list):
-            return value
-        elif isinstance(value, list):
-            return [value]
+    
+    @classmethod
+    def from_path(
+        cls,
+        path: str,
+        device: str,
+        max_seq_len: int,
+        dtype_override: torch.dtype | None = None,
+        offload_device: str | None = None,
+    ):
+        if os.path.exists(path):
+            # Get local filepaths for tokenizer, config, and weights.
+            tokenizer_filepath = os.path.join(path, "tokenizer.json")
+            config_filepath = os.path.join(path, "config.json")
+            weights_filepath = os.path.join(path, "model.safetensors")
         else:
-            return []
+            # Assume model path is a HuggingFace repo id.
+            from huggingface_hub import hf_hub_download
+            
+            # Download files for tokenizer, config, and weights.
+            tokenizer_filepath = hf_hub_download(repo_id=path, filename="tokenizer.json")
+            config_filepath = hf_hub_download(repo_id=path, filename="config.json")
+            weights_filepath = hf_hub_download(repo_id=path, filename="model.safetensors")
+
+        # Load the model config.
+        model_config = ModelConfig.from_json(
+            config_filepath,
+            dtype_override=dtype_override,
+        )
+        # Load the model weights.
+        weights = ModelParams.from_safetensors(
+            weights_filepath,
+            model_config,
+            initial_device=offload_device or device,
+        )
+        # Load the tokenizer.
+        tokenizer = Tokenizer.from_file(tokenizer_filepath)
+        # Create the model.
+        return Model(
+            model_config,
+            weights,
+            tokenizer,
+            device,
+            max_seq_len=max_seq_len,
+            offload_device=offload_device,
+        )
             
 
     @contextmanager

@@ -1,7 +1,7 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from gllm.config.generator_config import GeneratorConfig
+from gllm.engine.config import EngineConfig
 from gllm.engine.llm_engine_base import GenerationResult, GenerationRequest, LLMEngineBase
 
 
@@ -9,7 +9,7 @@ class HuggingFaceLLMEngine(LLMEngineBase):
     def __init__(
         self,
         model_path: str,
-        gen_config: GeneratorConfig,
+        engine_config: EngineConfig,
         device: str,
     ):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)

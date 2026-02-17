@@ -1,15 +1,15 @@
 import asyncio
 import queue
 import time
-
 from concurrent.futures import Future as ConcurrentFuture
-from typing import NamedTuple
+from typing import NamedTuple, Type
 
-from gllm.config.generator_config import GeneratorConfig
+from gllm.engine.config import EngineConfig, SetBlockDecoderConfig
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult, LLMEngineBase
-from gllm.engine.model_runner import ModelRunner
-from gllm.engine.scheduler import Scheduler
+from gllm.engine.base_model_runner import BaseModelRunner
+from gllm.engine.base_scheduler import BaseScheduler
 from gllm.engine.utils import complete_future_threadsafe
+from gllm.model.model import Model
 
 
 class QueuedRequest(NamedTuple):
@@ -22,26 +22,54 @@ class LLMEngine(LLMEngineBase):
     def __init__(
         self,
         model_path: str,
-        gen_config: GeneratorConfig,
+        engine_config: EngineConfig,
         device: str,
     ):
         self.alive = False
-        # TODO: Use factory method to construct ModelRunner
-        # and Scheduler depending on what spec decoding config
-        # is present in GeneratorConfig.
-        self.runner = ModelRunner(
-            model_path=model_path,
-            gen_config=gen_config,
+
+        # Create the model.
+        model = Model.from_path(
+            model_path,
+            device,
+            max_seq_len=engine_config.max_seq_len,
+            dtype_override=engine_config.model_dtype,
+            offload_device=engine_config.offload_device,
+        )
+
+        # Create model runner and scheduler.
+        runner_cls, scheduler_cls = self._get_runner_and_scheduler_cls(engine_config)
+        self.runner = runner_cls(
+            model=model,
+            engine_config=engine_config,
             device=device,
         )
-        self.scheduler = Scheduler(
-            model=self.runner.model,
-            gen_config=gen_config,
+        self.scheduler = scheduler_cls(
+            model=model,
+            engine_config=engine_config,
             device=device,
         )
-        self.max_queue_size = gen_config.max_queue_size
+
+        self.max_queue_size = engine_config.max_queue_size
         self.request_queue = queue.Queue(self.max_queue_size)
-    
+
+
+    @staticmethod
+    def _get_runner_and_scheduler_cls(
+        engine_config: EngineConfig,
+    ) -> tuple[Type[BaseModelRunner], Type[BaseScheduler]]:
+        if engine_config.spec_decode_config is None:
+            from gllm.engine.model_runner import ModelRunner
+            from gllm.engine.scheduler import Scheduler
+
+            return ModelRunner, Scheduler
+        elif isinstance(engine_config.spec_decode_config, SetBlockDecoderConfig):
+            from gllm.engine.spec_decode.sbd.model_runner import ModelRunner as SBDModelRunner
+            from gllm.engine.spec_decode.sbd.scheduler import Scheduler as SBDScheduler
+
+            return SBDModelRunner, SBDScheduler
+        else:
+            raise NotImplementedError(f"Unsupported spec decode config of type: {type(engine_config.spec_decode_config)}")
+        
 
     def _get_queued_requests(
         self,

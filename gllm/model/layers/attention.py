@@ -4,9 +4,10 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from gllm.config.model_config import ModelConfig
+from gllm.model.config import ModelConfig
 from gllm.model.layers.base_module import BaseModule
 from gllm.model.layers.linear import Linear
+from gllm.model.params import AttentionParams
 from gllm.ops.attention.reference_attention import reference_attention_fwd, reference_attention_bwd
 
 @dataclass
@@ -28,11 +29,10 @@ class AttentionMetadata:
 class Attention(BaseModule):
     def __init__(
         self,
-        id: str,
         model_config: ModelConfig,
-        safetensors,
+        params: AttentionParams,
     ):
-        super().__init__(id, None)
+        super().__init__(None)
         
         self.num_q_heads = model_config.num_attn_heads
         self.num_kv_heads = model_config.num_kv_heads
@@ -46,23 +46,14 @@ class Attention(BaseModule):
         # hidden_size = num_q_heads * head_dim
         assert self.hidden_size == self.num_q_heads * self.head_dim
         
-        dtype = model_config.dtype
         # [hidden_size, hidden_size]
-        q_proj_id = f"{id}.q_proj"
-        q_proj_weights = safetensors[f"{q_proj_id}.weight"].to(dtype=dtype)
-        self.linear_q = Linear(q_proj_id, q_proj_weights)
+        self.linear_q = Linear(params.q_proj)
         # [hidden_size, num_kv_heads * head_dim]
-        k_proj_id = f"{id}.k_proj"
-        k_proj_weights = safetensors[f"{k_proj_id}.weight"].to(dtype=dtype)
-        self.linear_k = Linear(k_proj_id, k_proj_weights)
+        self.linear_k = Linear(params.k_proj)
         # [hidden_size, num_kv_heads * head_dim]
-        v_proj_id = f"{id}.v_proj"
-        v_proj_weights = safetensors[f"{v_proj_id}.weight"].to(dtype=dtype)
-        self.linear_v = Linear(v_proj_id, v_proj_weights)
+        self.linear_v = Linear(params.v_proj)
         # [hidden_size, hidden_size]
-        o_proj_id = f"{id}.o_proj"
-        o_proj_weights = safetensors[f"{o_proj_id}.weight"].to(dtype=dtype)
-        self.linear_o = Linear(o_proj_id, o_proj_weights)
+        self.linear_o = Linear(params.o_proj)
         
         self.child_modules = [
             self.linear_q,

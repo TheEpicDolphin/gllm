@@ -6,7 +6,7 @@ import threading
 from dataclasses import replace
 
 from gllm.engine.hf_llm_engine import HuggingFaceLLMEngine
-from gllm.engine.llm_engine import GenerationRequest, GeneratorConfig, LLMEngine
+from gllm.engine.llm_engine import EngineConfig, GenerationRequest, LLMEngine
 
 
 @pytest.mark.parametrize("prompt", [
@@ -39,7 +39,7 @@ from gllm.engine.llm_engine import GenerationRequest, GeneratorConfig, LLMEngine
 def test_individual_generation_correctness(prompt: str):
     model_path = "meta-llama/Llama-3.2-1B-Instruct"
     device = "cpu"
-    gen_config = GeneratorConfig(
+    engine_config = EngineConfig(
         block_size=16,
         max_batch_size=8,
         max_seq_len=256,
@@ -57,7 +57,7 @@ def test_individual_generation_correctness(prompt: str):
     # Generate using gllm engine.
     llm_engine = LLMEngine(
         model_path=model_path,
-        gen_config=gen_config,
+        engine_config=engine_config,
         device=device,
     )
     actual = llm_engine.generate([request])[0]
@@ -66,7 +66,7 @@ def test_individual_generation_correctness(prompt: str):
     # Generate using huggingface transformers engine.
     hf_llm_engine = HuggingFaceLLMEngine(
         model_path=model_path,
-        gen_config=gen_config,
+        engine_config=engine_config,
         device=device
     )
     expected = hf_llm_engine.generate([request])[0]
@@ -88,15 +88,18 @@ def test_individual_generation_correctness(prompt: str):
         "Translate this sentence to Spanish: 'The cat is on the roof.'",
     ],
 ])
-def test_batched_generation_correctness(prompts: list[str]):  
+def test_batched_generation_correctness(prompts: list[str]):
+    import torch
+
+
     model_path = "meta-llama/Llama-3.2-1B-Instruct"
     device = "cpu"
-    gen_config = GeneratorConfig(
+    engine_config = EngineConfig(
         block_size=16,
         max_batch_size=8,
         max_seq_len=256,
-        model_dtype="float32",
-        kv_dtype="float32",
+        model_dtype=torch.float32,
+        kv_dtype=torch.float32,
     )
     
     requests = []
@@ -116,7 +119,7 @@ def test_batched_generation_correctness(prompts: list[str]):
     # Create LLM engine.
     llm_engine = LLMEngine(
         model_path=model_path,
-        gen_config=gen_config,
+        engine_config=engine_config,
         device=device,
     )
     # Generate in batch.
@@ -161,13 +164,13 @@ async def test_server_generation_correctness():
             )
         )
 
-    gen_config = GeneratorConfig(
+    engine_config = EngineConfig(
         block_size=16,
         max_batch_size=num_reqs,
         max_queue_size=num_reqs,
         max_seq_len=1024,
-        model_dtype="float32",
-        kv_dtype="float32",
+        model_dtype=torch.float32,
+        kv_dtype=torch.float32,
     )
 
     # Run a single batched generation. These results are used as
@@ -175,7 +178,7 @@ async def test_server_generation_correctness():
     print("Running batched generation...")
     llm_engine = LLMEngine(
         model_path=model_path,
-        gen_config=gen_config,
+        engine_config=engine_config,
         device=device,
     )
     batched_results = llm_engine.generate(requests)
@@ -187,8 +190,8 @@ async def test_server_generation_correctness():
     futures = []
     llm_engine = LLMEngine(
         model_path=model_path,
-        gen_config=replace(
-            gen_config,
+        engine_config=replace(
+            engine_config,
             # Only allow 4 requests to be processed at a time.
             # The rest are queued.
             max_batch_size=4,

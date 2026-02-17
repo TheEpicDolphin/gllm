@@ -1,40 +1,33 @@
 import torch
 import torch.nn.functional as F
 
-from gllm.config.model_config import ModelConfig
+from gllm.model.config import ModelConfig
 from gllm.model.layers.attention import Attention, AttentionMetadata
 from gllm.model.layers.base_module import BaseModule, StagingBuffers
 from gllm.model.layers.norm import RMSNorm
 from gllm.model.layers.ffn import FFN
+from gllm.model.params import TransformerLayerParams
 
 class TransformerLayer(BaseModule):
     def __init__(
         self,
-        id: str,
         model_config: ModelConfig,
-        safetensors,
+        params: TransformerLayerParams,
     ):
-        super().__init__(id, None)
+        super().__init__(None)
         
-        dtype = model_config.dtype
-        # Initialize layer input norm.
-        input_layernorm_id = f"{id}.input_layernorm"
-        input_layernorm_weights = safetensors[f"{input_layernorm_id}.weight"].to(dtype=dtype)
+        # Initialize input norm.
         self.input_norm = RMSNorm(
-            input_layernorm_id,
-            weights=input_layernorm_weights,
+            params.input_norm,
             eps=model_config.rms_norm_eps
         )
         # Initialize attention.
-        self.attention = Attention(f"{id}.self_attn", model_config, safetensors)
+        self.attention = Attention(model_config, params.attention)
         # Initialize FFN.
-        self.ffn = FFN(f"{id}.mlp", model_config, safetensors)
+        self.ffn = FFN(model_config, params.ffn)
         # Initialize post-attention norm.
-        post_attn_norm_id = f"{id}.post_attention_layernorm"
-        post_attn_norm_weights = safetensors[f"{post_attn_norm_id}.weight"].to(dtype=dtype)
         self.post_attn_norm = RMSNorm(
-            post_attn_norm_id,
-            weights=post_attn_norm_weights,
+            params.post_attn_norm,
             eps=model_config.rms_norm_eps
         )
         

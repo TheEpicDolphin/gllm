@@ -7,7 +7,7 @@ from dataclasses import dataclass, fields
 
 import torch
 
-from gllm.config.generator_config import GeneratorConfig
+from gllm.engine.config import EngineConfig
 from gllm.engine.batch_inputs import BatchInputs
 from gllm.engine.decode_output import DecodeOutput
 from gllm.engine.llm_engine_base import GenerationRequest, GenerationResult
@@ -83,21 +83,21 @@ class BaseScheduler(ABC):
     def __init__(
         self,
         model: Model,
-        gen_config: GeneratorConfig,
+        engine_config: EngineConfig,
         device: str,
     ):
         self.model = model
-        self.gen_config = gen_config
+        self.engine_config = engine_config
         self.device = device
 
         self.paged_kv_cache = PagedKVCache(
             model_config=self.model.config,
-            gen_config=gen_config,
+            engine_config=engine_config,
             device=device,
         )
         
-        self.max_batch_size = gen_config.max_batch_size
-        self.max_seq_len = gen_config.max_seq_len
+        self.max_batch_size = engine_config.max_batch_size
+        self.max_seq_len = engine_config.max_seq_len
         max_num_blocks = self.paged_kv_cache.num_required_blocks(self.max_seq_len)
 
         self.batch_size: int = 0

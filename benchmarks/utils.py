@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from torch.profiler import profile, record_function, ProfilerActivity
 from typing import Type
 
-from gllm.config.generator_config import GeneratorConfig
+from gllm.engine.config import EngineConfig
 from gllm.engine.llm_engine_base import GenerationRequest, LLMEngineBase
 
 
@@ -69,16 +69,18 @@ def benchmark(
     cpu_offloading=False,
     trace_file: str | None = None,
 ) -> BenchResult:
-    gen_config = GeneratorConfig(
+    engine_config = EngineConfig(
         block_size=32,
         max_batch_size=batch_size,
         max_seq_len=16384,
-        cpu_offloading=cpu_offloading,
+        model_dtype=torch.bfloat16,
+        kv_dtype=torch.bfloat16,
+        offload_device="cpu" if cpu_offloading else None,
     )
     
     engine = engine_cls(
         model_path=model,
-        gen_config=gen_config,
+        engine_config=engine_config,
         device=device,
     )
 

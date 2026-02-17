@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 import torch
 
-from gllm.config.generator_config import GeneratorConfig
-from gllm.config.model_config import ModelConfig
+from gllm.engine.config import EngineConfig
+from gllm.model.config import ModelConfig
 
 @dataclass
 class GPUBlock:
@@ -16,16 +16,16 @@ class PagedKVCache:
     def __init__(
         self,
         model_config: ModelConfig,
-        gen_config: GeneratorConfig,
+        engine_config: EngineConfig,
         device: str,
     ):
         num_layers = model_config.num_layers
         num_q_heads = model_config.num_attn_heads
         num_kv_heads = model_config.num_kv_heads
-        kv_dtype = model_config.kv_dtype
-        max_batch_size = gen_config.max_batch_size
-        max_seq_len = gen_config.max_seq_len
-        self.block_size = gen_config.block_size
+        kv_dtype = engine_config.kv_dtype or model_config.dtype
+        max_batch_size = engine_config.max_batch_size
+        max_seq_len = engine_config.max_seq_len
+        self.block_size = engine_config.block_size
         head_dim = model_config.hidden_size // num_q_heads
         max_num_blocks = self.num_required_blocks(max_batch_size * max_seq_len)
         # [2, num_layers, max_num_blocks, block_size, num_kv_heads, head_dim]
