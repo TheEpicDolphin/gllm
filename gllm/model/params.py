@@ -53,8 +53,8 @@ class TransformerLayerParams:
 class ModelParams:
     embed: Parameter
     layers: list[TransformerLayerParams]
-    lm_head: Parameter
     final_norm: Parameter
+    lm_head: Parameter
 
 
     @classmethod
@@ -90,12 +90,35 @@ class ModelParams:
             return ModelParams(
                 embed=embed_param,
                 layers=layers,
+                final_norm=Parameter.from_safetensors(safetensors, f"model.norm", dtype),
                 # LM head is tied to embedding for llama.
                 lm_head=embed_param,
-                final_norm=Parameter.from_safetensors(safetensors, f"model.norm", dtype),
             )
         elif model_config.type == ModelType.LLADA:
-            # TODO: Implement this for LLADA models.
-            return None
+            layers = []
+            for layer_idx in range(model_config.num_layers):
+                layer_id = f"model.transformer.blocks.{layer_idx}"
+                layers.append(TransformerLayerParams(
+                    id=layer_id,
+                    input_norm=Parameter.from_safetensors(safetensors, f"{layer_id}.attn_norm", dtype),
+                    attention=AttentionParams(
+                        q_proj=Parameter.from_safetensors(safetensors, f"{layer_id}.q_proj", dtype),
+                        k_proj=Parameter.from_safetensors(safetensors, f"{layer_id}.k_proj", dtype),
+                        v_proj=Parameter.from_safetensors(safetensors, f"{layer_id}.v_proj", dtype),
+                        o_proj=Parameter.from_safetensors(safetensors, f"{layer_id}.attn_out", dtype),
+                    ),
+                    post_attn_norm=Parameter.from_safetensors(safetensors, f"{layer_id}.ff_norm", dtype),
+                    ffn=FFNParams(
+                        up_proj=Parameter.from_safetensors(safetensors, f"{layer_id}.up_proj", dtype),
+                        down_proj=Parameter.from_safetensors(safetensors, f"{layer_id}.ff_out", dtype),
+                        gate_proj=Parameter.from_safetensors(safetensors, f"{layer_id}.ff_proj", dtype),
+                    )
+                ))
+            return ModelParams(
+                embed=Parameter.from_safetensors(safetensors, f"model.transformer.wte", dtype),
+                layers=layers,
+                final_norm=Parameter.from_safetensors(safetensors, f"model.transformer.ln_f", dtype),
+                lm_head=Parameter.from_safetensors(safetensors, f"model.transformer.ff_out", dtype),
+            )
         else:
             raise NotImplementedError(f"Attempted to load weights for unsupported model type: {model_config.type}")
